@@ -119,7 +119,9 @@
       <button class="btn btn-green" id="btn-publish">发布</button>
       <span id="publish-status" style="font-size:12px;color:#666"></span>
     </div>
-    <div class="log" id="p3-log">← 在②点「一键克隆」后，这里自动填好原文；改成你自己的说法再发布。MVP 文案由你人工调整（可配合豆包生成）。</div>
+    <div class="log" id="p3-log">← 在②点「一键克隆」后，这里自动填好原文；改成你自己的说法再发布。
+测试请选「仅自己可见」。发布前会弹出确认框，请核对内容无误。
+（注：当前容器无「保存草稿」能力；安全测试=仅自己可见+工具强制冷却）</div>
   </div>
 
   <!-- P4 记录与设置 -->
@@ -263,6 +265,26 @@ $('#btn-publish').addEventListener('click', async () => {
     const m = img.src.match(/path=([^&]+)/);
     return m ? decodeURIComponent(m[1]) : '';
   }).filter(Boolean);
+
+  // 人工审批闸门（rednote-gate 机制）：发布前回读全部字段，确认才发，防误发
+  const confirmText =
+`即将发布到小红书，请确认内容无误：
+
+【标题】${title}
+【正文】${content.slice(0, 120)}${content.length > 120 ? '…' : ''}
+【标签】${tags.length ? tags.join(' ') : '（无）'}
+【可见范围】${visibility}
+【图片】${images.length} 张
+
+⚠️ 发布提示：
+· 短时间连续发布会触发平台风控——工具已强制间隔 ≥3 小时、每日 ≤2 条
+· 测试请务必选「仅自己可见」
+· 发布即生效，无法撤回，确认无误再点「确认发布」`;
+  if (!window.confirm(confirmText)) {
+    setLog($('#p3-log'), '已取消发布（未发出）。');
+    return;
+  }
+
   const btn = $('#btn-publish');
   btn.disabled = true; btn.textContent = '发布中…';
   $('#publish-status').innerHTML = '<span class="spin"></span>';
@@ -278,7 +300,13 @@ $('#btn-publish').addEventListener('click', async () => {
       loadLogs();
     } else {
       $('#publish-status').textContent = '❌ 发布失败';
-      setLog($('#p3-log'), `❌ 发布失败: ${d.raw.slice(0,200)}\n⚠️ 请勿立即重试——连续短时间发布会加重平台风控，建议等待 30 分钟以上再手动重试。`);
+      // 风控熔断提示：识别风控类失败，明确建议停用账号，不鼓励立即重试
+      const risk = /验证|频繁|风控|拦截|校验|未跳转|发布失败|异常/i.test(d.raw || '');
+      if (risk) {
+        setLog($('#p3-log'), `❌ 发布失败: ${d.raw.slice(0, 200)}\n\n🚨 风控熔断提示：账号可能已被平台标记（验证码/操作频繁/未跳转）。\n  请停止所有发布操作 ≥24 小时，人工确认账号状态正常后再恢复。\n  切勿立即重试——硬闯会把软限流升级为封号。`);
+      } else {
+        setLog($('#p3-log'), `❌ 发布失败: ${d.raw.slice(0, 200)}\n⚠️ 请勿立即重试，等待 30 分钟以上再手动重试。`);
+      }
     }
   } catch(e) {
     $('#publish-status').textContent = '❌ 请求失败';
