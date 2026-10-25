@@ -244,8 +244,37 @@ class PublishReq(BaseModel):
     is_original: bool = False
 
 
+# 发布风控冷却（2026-10-26 上线，教训来源：连续测试发布触发平台频率限制）
+#   - 两次发布最小间隔：PUBLISH_COOLDOWN_MIN 分钟（防"短时间连发"行为特征）
+#   - 失败不自动重试：前端/调用方只允许人工重新发起，且同样受冷却约束
+#   - 冷却依据 publish_logs 最近一条记录（无论成功失败，均计入行为频率）
+PUBLISH_COOLDOWN_MIN = 30
+
+
+def _last_publish_ago_minutes(con) -> float | None:
+    row = con.execute("SELECT created_at FROM publish_logs ORDER BY id DESC LIMIT 1").fetchone()
+    if not row:
+        return None
+    try:
+        last = datetime.datetime.fromisoformat(row["created_at"])
+    except (TypeError, ValueError):
+        return None
+    return (datetime.datetime.now() - last).total_seconds() / 60.0
+
+
 @app.post("/api/publish")
 def publish(req: PublishReq):
+    # 冷却检查：距上次发布不足 N 分钟 → 拒绝（保护账号，不靠自觉）
+    con = _db()
+    ago = _last_publish_ago_minutes(con)
+    if ago is not None and ago < PUBLISH_COOLDOWN_MIN:
+        wait = PUBLISH_COOLDOWN_MIN - ago
+        return {
+            "ok": False,
+            "cooldown": True,
+            "raw": f"发布过于频繁，已触发风控保护：距上次发布仅 {ago:.0f} 分钟，请等待 {wait:.0f} 分钟后重试（连续短时间发布是平台风控最敏感的行为特征）。",
+        }
+
     res = mcp_call("publish_content", {
         "title": req.title[:20],
         "content": req.content,
@@ -257,7 +286,6 @@ def publish(req: PublishReq):
     text = res.get("_raw_text") or json.dumps(res, ensure_ascii=False)
     ok = "发布成功" in text or "内容发布成功" in text
 
-    con = _db()
     con.execute(
         "INSERT INTO publish_logs (feed_id, title, content, tags, visibility, status, created_at) VALUES (?,?,?,?,?,?,?)",
         (req.feed_id, req.title[:50], req.content[:200], ",".join(req.tags), req.visibility,

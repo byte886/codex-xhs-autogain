@@ -269,9 +269,17 @@ $('#btn-publish').addEventListener('click', async () => {
   try {
     const r = await fetch('/api/publish', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ title, content, tags, visibility, images, feed_id: currentFeed }) });
     const d = await r.json();
-    $('#publish-status').textContent = d.ok ? '✅ 发布成功' : '❌ ' + d.raw.slice(0, 100);
-    setLog($('#p3-log'), d.ok ? `✅ 发布成功（${visibility}）。` : `❌ 发布失败: ${d.raw.slice(0,200)}`);
-    if (d.ok) loadLogs();
+    if (d.cooldown) {
+      $('#publish-status').textContent = '⏳ ' + d.raw.slice(0, 60);
+      setLog($('#p3-log'), '⏳ ' + d.raw);
+    } else if (d.ok) {
+      $('#publish-status').textContent = '✅ 发布成功';
+      setLog($('#p3-log'), `✅ 发布成功（${visibility}）。`);
+      loadLogs();
+    } else {
+      $('#publish-status').textContent = '❌ 发布失败';
+      setLog($('#p3-log'), `❌ 发布失败: ${d.raw.slice(0,200)}\n⚠️ 请勿立即重试——连续短时间发布会加重平台风控，建议等待 30 分钟以上再手动重试。`);
+    }
   } catch(e) {
     $('#publish-status').textContent = '❌ 请求失败';
     setLog($('#p3-log'), '❌ ' + e.message);
