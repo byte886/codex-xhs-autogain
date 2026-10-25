@@ -244,11 +244,19 @@ class PublishReq(BaseModel):
     is_original: bool = False
 
 
-# 发布风控冷却（2026-10-26 上线，教训来源：连续测试发布触发平台频率限制）
-#   - 两次发布最小间隔：PUBLISH_COOLDOWN_MIN 分钟（防"短时间连发"行为特征）
-#   - 失败不自动重试：前端/调用方只允许人工重新发起，且同样受冷却约束
-#   - 冷却依据 publish_logs 最近一条记录（无论成功失败，均计入行为频率）
-PUBLISH_COOLDOWN_MIN = 30
+# 发布风控硬约束（2026-10-26 上线，依据 research/step5-小红书风控调研.md）
+#   证据：redbook 发帖间隔 3-4h；MediaUse 发布 ≥20min 间隔；NoobClaw 1 帖/天最稳；
+#         MediaUse/socai 同一文案 24h 拒发；出现验证码/风控 → 停写 ≥24h 绝不自动重试。
+#   - 两次发布最小间隔：PUBLISH_COOLDOWN_MIN 分钟
+#   - 每日发布上限：PUBLISH_DAILY_MAX（成功发布计数）
+#   - 同一标题+正文组合 24h 内拒绝（防重复文案）
+PUBLISH_COOLDOWN_MIN = 180
+PUBLISH_DAILY_MAX = 2
+DUPLICATE_WINDOW_HOURS = 24
+
+
+def _now():
+    return datetime.datetime.now()
 
 
 def _last_publish_ago_minutes(con) -> float | None:
@@ -259,12 +267,30 @@ def _last_publish_ago_minutes(con) -> float | None:
         last = datetime.datetime.fromisoformat(row["created_at"])
     except (TypeError, ValueError):
         return None
-    return (datetime.datetime.now() - last).total_seconds() / 60.0
+    return (_now() - last).total_seconds() / 60.0
+
+
+def _publish_count_today(con) -> int:
+    today = _now().date().isoformat()
+    row = con.execute(
+        "SELECT COUNT(*) AS c FROM publish_logs WHERE status='success' AND date(created_at)=?",
+        (today,),
+    ).fetchone()
+    return row["c"] if row else 0
+
+
+def _duplicate_published(con, title, content) -> bool:
+    since = (_now() - datetime.timedelta(hours=DUPLICATE_WINDOW_HOURS)).isoformat(timespec="seconds")
+    row = con.execute(
+        "SELECT COUNT(*) AS c FROM publish_logs WHERE status='success' AND title=? AND content=? AND created_at>=?",
+        (title[:50], content[:200], since),
+    ).fetchone()
+    return (row["c"] if row else 0) > 0
 
 
 @app.post("/api/publish")
 def publish(req: PublishReq):
-    # 冷却检查：距上次发布不足 N 分钟 → 拒绝（保护账号，不靠自觉）
+    # ① 冷却检查：距上次发布不足 N 分钟 → 拒绝
     con = _db()
     ago = _last_publish_ago_minutes(con)
     if ago is not None and ago < PUBLISH_COOLDOWN_MIN:
@@ -272,7 +298,23 @@ def publish(req: PublishReq):
         return {
             "ok": False,
             "cooldown": True,
-            "raw": f"发布过于频繁，已触发风控保护：距上次发布仅 {ago:.0f} 分钟，请等待 {wait:.0f} 分钟后重试（连续短时间发布是平台风控最敏感的行为特征）。",
+            "raw": f"发布过于频繁：距上次发布仅 {ago:.0f} 分钟。平台安全间隔 3-4 小时（小红书对短时间连发很敏感），请等待 {wait:.0f} 分钟后重试。",
+        }
+
+    # ② 每日上限：成功发布数已达上限 → 拒绝
+    if _publish_count_today(con) >= PUBLISH_DAILY_MAX:
+        return {
+            "ok": False,
+            "cooldown": True,
+            "raw": f"今日发布已达上限（{PUBLISH_DAILY_MAX} 条）。每天每账号 1-2 条最安全，明日再发。",
+        }
+
+    # ③ 文案防重：同一标题+正文 24h 内已成功发布 → 拒绝
+    if _duplicate_published(con, req.title, req.content):
+        return {
+            "ok": False,
+            "cooldown": True,
+            "raw": f"该文案 {DUPLICATE_WINDOW_HOURS} 小时内已发布过。平台对重复文案判定极严（同文案 24h 拒发），请改写标题或正文。",
         }
 
     res = mcp_call("publish_content", {
@@ -289,7 +331,7 @@ def publish(req: PublishReq):
     con.execute(
         "INSERT INTO publish_logs (feed_id, title, content, tags, visibility, status, created_at) VALUES (?,?,?,?,?,?,?)",
         (req.feed_id, req.title[:50], req.content[:200], ",".join(req.tags), req.visibility,
-         "success" if ok else "failed", datetime.datetime.now().isoformat(timespec="seconds")),
+         "success" if ok else "failed", _now().isoformat(timespec="seconds")),
     )
     con.commit()
     return {"ok": ok, "raw": text[:400]}
