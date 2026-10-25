@@ -135,3 +135,25 @@ def test_dimensions_sum_bounds():
     info = score_note(_note(liked_count=999999, fans_count=1))
     assert info["score"] <= 100.0
     assert info["score"] >= 0.0
+
+
+class TestChineseUnits:
+    """中文单位缩写（6.1万 / 3千）必须正确解析，真实大 V 数据形态。"""
+
+    def test_wan_unit(self):
+        info = score_note(_note(liked_count="1.2万", fans_count="500"))
+        # 12000 赞 / 500 粉
+        assert info["fan_ratio"] == 12000 / 500
+
+    def test_qian_unit(self):
+        info = score_note(_note(liked_count="3千", fans_count="300"))
+        assert info["fan_ratio"] == 3000 / 300
+
+    def test_yi_unit(self):
+        info = score_note(_note(liked_count="1.5亿", fans_count="100"))
+        assert info["fan_ratio"] == 150000000 / 100
+
+    def test_mixed_unit_fan_count(self):
+        info = score_note(_note(liked_count="500", fans_count="6.1万"))
+        # fan_ratio 输出 round(x, 2)：500/61000=0.0082 → 0.01
+        assert info["fan_ratio"] == pytest.approx(round(500 / 61000, 2), abs=1e-9)

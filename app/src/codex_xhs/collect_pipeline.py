@@ -95,15 +95,20 @@ def parse_feeds(search_result: dict) -> list[dict]:
 
 
 def get_feed_detail(note: dict) -> dict:
-    """补全发布时间与完整互动数据。"""
+    """补全发布时间与完整互动数据。
+
+    get_feed_detail 返回结构：{ data: { note: {...} } }，
+    note.time 为毫秒级时间戳（如 1778155374000）→ 转秒存库。
+    """
     res = mcp_call("get_feed_detail", {
         "feed_id": note["feed_id"],
         "xsec_token": note["xsec_token"],
     })
-    detail = res.get("note", res)
+    detail = res.get("data", {}).get("note", {}) or res.get("note", {})
     if isinstance(detail, dict):
         inter = detail.get("interactInfo", {})
-        note["publish_time"] = detail.get("time")
+        ts = detail.get("time")
+        note["publish_time"] = int(ts / 1000) if isinstance(ts, (int, float)) else ts
         note["liked_count"] = inter.get("likedCount", note.get("liked_count", "0"))
         note["collected_count"] = inter.get("collectedCount", note.get("collected_count", "0"))
         note["comment_count"] = inter.get("commentCount", note.get("comment_count", "0"))
@@ -153,6 +158,7 @@ def init_db(path: Path) -> sqlite3.Connection:
             nickname TEXT,
             avatar TEXT,
             cover_url TEXT,
+            xsec_token TEXT,
             desc TEXT,
             ip_location TEXT,
             liked_count INTEGER,
@@ -204,11 +210,11 @@ def main():
     def upsert(n):
         si = n["score_info"]
         con.execute(
-            "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 n.get("feed_id"), n.get("keyword", args.keywords[0]), n.get("title", ""), n.get("type", ""),
                 n.get("user_id"), n.get("nickname", ""), n.get("avatar", ""),
-                n.get("cover_url", ""), n.get("desc", ""), n.get("ip_location", ""),
+                n.get("cover_url", ""), n.get("xsec_token", ""), n.get("desc", ""), n.get("ip_location", ""),
                 int(n.get("liked_count") or 0), int(n.get("collected_count") or 0),
                 int(n.get("comment_count") or 0), int(n.get("shared_count") or 0),
                 int(n.get("fans_count") or 0), n.get("publish_time"),

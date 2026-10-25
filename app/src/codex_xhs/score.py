@@ -42,13 +42,30 @@ TAGS = {
 
 
 def _to_int(value: str | int | None, default: int = 0) -> int:
-    """互动数字段在 MCP 返回里是 string，统一转 int。"""
+    """互动数字段在 MCP 返回里是 string，统一转 int。
+
+    支持中文单位缩写："1.2万" → 12000、"3千" → 3000、"1.5亿" → 150000000。
+    大 V 粉丝数常见"6.1万"形态，直接 int() 会炸。
+    """
     if value is None:
         return default
-    try:
+    if isinstance(value, (int, float)):
         return int(value)
-    except (TypeError, ValueError):
+    s = str(value).strip().replace(",", "")
+    if not s:
         return default
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    unit = {"万": 10000, "千": 1000, "亿": 100000000}
+    for suffix, mult in unit.items():
+        if s.endswith(suffix):
+            try:
+                return int(float(s[: -len(suffix)]) * mult)
+            except ValueError:
+                return default
+    return default
 
 
 def _days_since(publish_time: int | None, now: datetime | None = None) -> float:
