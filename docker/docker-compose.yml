@@ -1,0 +1,14 @@
+services:
+  xiaohongshu-mcp:
+    image: xpzouying/xiaohongshu-mcp:latest
+    container_name: xhs-mcp
+    ports:
+      - "18060:18060"
+    environment:
+      - COOKIES_PATH=/app/data/cookies.json
+      - HOME=/app/data/home
+      - XDG_CONFIG_HOME=/app/data/config
+    volumes:
+      - ./data:/app/data
+      - ./images:/app/images
+    restart: unless-stopped
