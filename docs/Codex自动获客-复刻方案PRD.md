@@ -202,6 +202,8 @@
 
 ## 十、调研溯源（关键来源）
 
+> 完整链接清单（12 个生财 + 12 个外部，含每个结论的原文出处）统一维护在 **`docs/research/step4-deepdive-补充报告.md` §四/§六**，本处只保留核心出处，避免重复维护。
+
 - 视频拆解：需求文档 v0.2（OCR/关键帧）
-- 生财：乔川全自动获客帖 55188128214188214 / 乔川 OpenClaw 14588155124111142 / 亦仁超级标20 82258281182815242 / 大周推舟AI 14588582154552442 / 航海《小红书AI提效工作流》activityId=9631 / AI 亦仁会话 20261025120609IREoUrx
-- 外部：MediaClaw https://mediaclaw.app/en/features/codex-integration / 玫瑰克隆 https://www.dcxh7.com/ / GitHub 开源清单见 step3-external-findings.md
+- 生财核心帖：乔川全自动获客工作流 https://scys.com/articleDetail/xq_topic/55188128214188214 / 大周·推舟AI https://scys.com/articleDetail/xq_topic/14588582154552442 / 亦仁超级标20 https://scys.com/articleDetail/xq_topic/82258281182815242 / 航海《小红书AI提效工作流》activityId=9631 / AI 亦仁会话 20261025120609IREoUrx
+- 外部核心：MediaClaw https://mediaclaw.app/en/features/codex-integration / 玫瑰克隆 https://www.dcxh7.com/ / GitHub 开源清单见 step3-external-findings.md
