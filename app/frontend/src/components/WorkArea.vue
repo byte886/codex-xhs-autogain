@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { appState } from '../store'
+import { appState, setStage } from '../store'
 import type { Note } from '../types'
 import CardGrid from './CardGrid.vue'
 import FilterRank from './FilterRank.vue'
@@ -63,7 +63,7 @@ function cloneFromRank(n: Note) {
           <span class="k">评分模型</span><span class="v small">互动密度 × 内容结构 × 爆款潜力</span>
         </div>
       </div>
-      <FilterRank :notes="appState.notes" @clone="cloneFromRank" />
+      <FilterRank :notes="appState.notes" @clone="cloneFromRank" @to-pick="setStage('pick')" />
     </div>
 
     <!-- 选择作品 -->

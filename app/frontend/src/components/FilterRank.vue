@@ -4,7 +4,7 @@ import type { Note } from '../types'
 import { coverProxy } from '../store'
 
 const props = defineProps<{ notes: Note[] }>()
-const emit = defineEmits<{ (e: 'clone', note: Note): void }>()
+const emit = defineEmits<{ (e: 'clone', note: Note): void; (e: 'to-pick'): void }>()
 
 const broken = new Set<string>()
 
@@ -41,6 +41,9 @@ function fmt(n: number | null | undefined): string {
         <button class="b-btn primary" @click="emit('clone', n)">一键克隆</button>
         <button class="b-btn" @click="() => {}">采集客户</button>
       </div>
+    </div>
+    <div style="text-align:center;margin:16px 0">
+      <button class="b-btn primary" @click="emit('to-pick')">下一步：选择内容（勾选目标）</button>
     </div>
   </div>
 </template>
