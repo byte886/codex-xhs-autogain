@@ -41,6 +41,12 @@ async function cloneOne(note: Note) {
   await publishRef.value?.openFor(note)
 }
 
+// 采集客户：单条（图文+视频均可），P4 未实现前为演示
+function collectClients(note: Note) {
+  const t = (note.title || '该笔记').slice(0, 12)
+  toast(`演示：采集「${t}…」的互动用户名单（P4 实现）`)
+}
+
 function backFromPublish() {
   appState.publishOpen = false
 }
@@ -60,7 +66,7 @@ function fmtTime(s: number) {
       <div class="workbench">
         <CollectPanel />
         <main class="work">
-          <WorkArea @menu="openMenu" @clone="cloneOne" />
+          <WorkArea @menu="openMenu" @clone="cloneOne" @clients="collectClients" />
         </main>
       </div>
     </template>

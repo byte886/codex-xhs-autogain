@@ -8,6 +8,7 @@ import FilterRank from './FilterRank.vue'
 const emit = defineEmits<{
   (e: 'menu', payload: { note: Note; x: number; y: number }): void
   (e: 'clone', note: Note): void
+  (e: 'clients', note: Note): void
 }>()
 
 const filterText = ref('')
@@ -69,7 +70,7 @@ function cloneFromRank(n: Note) {
       <div class="filter-title" style="margin-bottom:10px">
         <input v-model="filterText" placeholder="请选标题,作者或UID" style="width:100%" />
       </div>
-      <CardGrid :notes="appState.notes" selectable :filter-text="filterText" @menu="emit('menu', $event)" @clone="emit('clone', $event)" />
+      <CardGrid :notes="appState.notes" selectable :filter-text="filterText" @menu="emit('menu', $event)" @clone="emit('clone', $event)" @clients="emit('clients', $event)" />
     </div>
   </div>
 </template>

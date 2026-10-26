@@ -252,6 +252,16 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(255, 36, 66,
 }
 .card .open-link:hover { background: rgba(0, 0, 0, .8); }
 
-/* 卡片「一键克隆」单条按钮 */
-.card .clone-btn { width: 100%; margin-top: 8px; padding: 5px 0; font-size: 12px; }
-.card .clone-btn:disabled { opacity: .5; cursor: not-allowed; }
+/* 卡片悬停浮层：单条操作（一键克隆/采集客户） */
+.card .hover-actions {
+  position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 6px;
+  padding: 8px; background: linear-gradient(180deg, transparent, rgba(0,0,0,.62));
+  opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 3;
+}
+.card:hover .hover-actions, .card.sel .hover-actions { opacity: 1; pointer-events: auto; }
+.hover-actions .ha-btn {
+  flex: 1; border: none; border-radius: 6px; padding: 6px 0; font-size: 12px;
+  font-weight: 600; color: #fff; background: rgba(255, 36, 66, .88); cursor: pointer;
+}
+.hover-actions .ha-btn.client { background: rgba(64, 89, 219, .88); }
+.hover-actions .ha-btn.off { background: rgba(120, 120, 120, .7); cursor: not-allowed; }

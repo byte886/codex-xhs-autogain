@@ -13,6 +13,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'menu', payload: { note: Note; x: number; y: number }): void
   (e: 'clone', note: Note): void
+  (e: 'clients', note: Note): void
 }>()
 
 const filtered = computed(() => {
@@ -156,6 +157,16 @@ const selCount = computed(() => selectedCount())
           </svg>
         </button>
         <span class="check">✓</span>
+        <!-- 悬停浮层：单条操作（一键克隆仅图文，采集客户图文+视频均可） -->
+        <div class="hover-actions">
+          <button
+            class="ha-btn clone"
+            :class="{ off: note.note_type === 'video' }"
+            :title="note.note_type === 'video' ? '视频暂不支持克隆' : '一键克隆（抄内容）'"
+            @click.stop="note.note_type === 'video' ? toast('视频笔记暂不支持一键克隆（视频克隆待办中）') : emit('clone', note)"
+          >一键克隆</button>
+          <button class="ha-btn client" title="采集客户（采人）" @click.stop="emit('clients', note)">采集客户</button>
+        </div>
       </div>
       <div class="meta">
         <div class="title">{{ note.title || '（无标题）' }}</div>
@@ -171,11 +182,6 @@ const selCount = computed(() => selectedCount())
             {{ fmt(note.liked_count) }}
           </span>
         </div>
-        <button
-          class="b-btn mini clone-btn"
-          :disabled="note.note_type === 'video'"
-          @click.stop="note.note_type === 'video' ? toast('视频笔记暂不支持一键克隆（视频克隆待办中）') : emit('clone', note)"
-        >一键克隆</button>
       </div>
     </div>
   </div>
