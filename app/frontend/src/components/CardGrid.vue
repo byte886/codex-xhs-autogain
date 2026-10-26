@@ -15,9 +15,14 @@ const emit = defineEmits<{
 }>()
 
 const filtered = computed(() => {
-  const q = (props.filterText || '').trim()
+  const q = (props.filterText || '').trim().toLowerCase()
   if (!q) return props.notes
-  return props.notes.filter(n => (n.title || '').includes(q))
+  // 多字段筛选：标题 / 作者昵称 / 笔记ID（feed_id），任一命中即显示
+  return props.notes.filter(n =>
+    (n.title || '').toLowerCase().includes(q) ||
+    (n.nickname || '').toLowerCase().includes(q) ||
+    (n.feed_id || '').toLowerCase().includes(q)
+  )
 })
 
 function fmt(n: number | null | undefined): string {
@@ -60,6 +65,11 @@ function selectAll() {
   toast(`已全选 ${props.notes.length} 条图文`)
 }
 
+function clearSelect() {
+  appState.selected = {}
+  toast('已清空选择')
+}
+
 function exportJSON() {
   const data = props.notes.map(n => ({
     feed_id: n.feed_id, title: n.title, nickname: n.nickname,
@@ -100,6 +110,17 @@ const selCount = computed(() => selectedCount())
 </script>
 
 <template>
+  <!-- 顶部批量条（对齐视频：网格上方） -->
+  <div class="batch" v-if="selectable && notes.length" style="margin-bottom:14px;justify-content:space-between">
+    <span style="color:#888;font-size:12px">已选 {{ selCount }} 篇</span>
+    <div style="display:flex;gap:8px">
+      <button class="b-btn" @click="selectAll">全选图文</button>
+      <button class="b-btn" @click="clearSelect">清空选择</button>
+      <button class="b-btn" @click="toast('演示：下载选中图片 zip（P3 实现）')">下载图片</button>
+      <button class="b-btn" @click="exportJSON">导出 JSON</button>
+      <button class="b-btn" @click="exportCSV">导出 CSV</button>
+    </div>
+  </div>
   <div class="grid">
     <div
       v-for="note in filtered"
@@ -136,11 +157,5 @@ const selCount = computed(() => selectedCount())
       </div>
     </div>
   </div>
-  <div v-if="!filtered.length" style="text-align:center;color:#AAA;padding:40px 0">暂无笔记（{{ props.filterText ? '无匹配标题' : '先点「开始搜索」' }}）</div>
-  <div class="batch" v-if="selectable && notes.length" style="margin-top:14px;justify-content:flex-end">
-    <button class="b-btn" @click="selectAll">全选图文</button>
-    <button class="b-btn" @click="toast('演示：下载选中图片 zip（P3 实现）')">下载图片</button>
-    <button class="b-btn" @click="exportJSON">导出 JSON</button>
-    <button class="b-btn" @click="exportCSV">导出 CSV</button>
-  </div>
+  <div v-if="!filtered.length" style="text-align:center;color:#AAA;padding:40px 0">暂无笔记（{{ props.filterText ? '无匹配结果（标题/作者/UID）' : '先点「开始搜索」' }}）</div>
 </template>
