@@ -12,6 +12,7 @@
 import argparse
 import json
 import random
+import re
 import sqlite3
 import sys
 import time
@@ -122,6 +123,12 @@ def get_feed_detail(note: dict) -> dict:
         note["shared_count"] = inter.get("sharedCount", note.get("shared_count", "0"))
         note["desc"] = detail.get("desc", "")
         note["ip_location"] = detail.get("ipLocation", "")
+        # 无标题笔记兜底（小红书允许无标题发布，正文常以#话题开头）：
+        # 取正文去掉话题标记后的首段前 20 字作为展示标题，保证采集/克隆不出现空标题
+        if not note.get("title") and note.get("desc"):
+            d = note["desc"].strip().lstrip("#").strip()
+            d = re.sub(r"\[.*?\]", "", d).strip()
+            note["title"] = d[:20]
     time.sleep(REQUEST_INTERVAL[0] + random.random() * (REQUEST_INTERVAL[1] - REQUEST_INTERVAL[0]))
     return note
 
