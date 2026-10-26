@@ -42,6 +42,7 @@ from codex_xhs.collect_pipeline import (  # noqa: E402
     get_user_profile,
     mcp_call,
     parse_feeds,
+    search_via_browser,
 )
 
 app = FastAPI(title="Codex 自动获客 · 本地工具")
@@ -86,77 +87,53 @@ def _init_tables(con):
 # ================= 登录 =================
 @app.get("/api/login_status")
 def login_status():
-    res = mcp_call("check_login_status", {})
-    text = res.get("_raw_text") or json.dumps(res, ensure_ascii=False)
-    return {"status": "logged_in" if "已登录" in text else "not_logged_in", "raw": text[:200]}
+    """本地浏览器登录态检测：CDP 控制外部 Chrome（页面特征，不依赖签名接口）。"""
+    import re
+    import subprocess
+
+    root = Path(__file__).resolve().parents[3]
+    try:
+        r = subprocess.run(
+            ["node", "scripts/browser/actions.js", "login-check"],
+            cwd=root, capture_output=True, timeout=90,
+        )
+        out = (r.stdout or b"").decode(errors="replace")
+        m = re.search(r"LOGIN_STATE:(\{.*\})", out, re.S)
+        if not m:
+            return {"status": "unknown", "raw": (out or (r.stderr or b"").decode(errors="replace"))[:200]}
+        st = json.loads(m.group(1))
+        ok = st.get("logged_in")
+        return {
+            "status": "logged_in" if ok else "not_logged_in",
+            "logged_in": bool(ok),
+            "nickname": "",
+            "raw": f"url={st.get('url')} noteCards={st.get('noteCards')}",
+        }
+    except Exception as e:
+        return {"status": "unknown", "logged_in": False, "nickname": "", "raw": f"本地浏览器检测失败: {str(e)[:100]}"}
 
 
 @app.get("/api/qrcode")
 def qrcode():
-    """Cookie 失效时前端弹窗扫码用：优先复用容器页面上已出现的登录弹窗二维码（含"设备登录超限"弹窗——扫码即可解锁）；
-    仅当页面无二维码时才触发一次 get_login_qrcode（低频率，避免加剧风控）。"""
-    import base64
+    """Cookie 失效时前端引导扫码：新架构（Docker 已退役）下登录发生在外部 Chrome 内，
+    本接口负责在 Chrome 中打开小红书首页让用户直接扫码，并返回引导信息。
+    前端配合轮询 /api/login_status 直到登录成功。"""
     import subprocess
-    import time
 
-    inner = "/app/data/cdp_qr.py"
-    script_src = BASE / "scripts" / "cdp_qr.py"
-    if script_src.exists():
-        subprocess.run(["docker", "cp", str(script_src), f"xhs-mcp:{inner}"],
-                       capture_output=True, timeout=30)
-
-    for _f in ("/tmp/qr_src.txt", "/tmp/qr_b64.txt", "/tmp/qr_state.txt"):
-        try: Path(_f).unlink()
-        except FileNotFoundError: pass
-
-    def _run(extra=""):
-        try:
-            r = subprocess.run(["docker", "exec", "xhs-mcp", "python3", inner, extra],
-                               capture_output=True, timeout=40)
-        except Exception as e:
-            return {"err": str(e), "out": ""}
-        return {"out": (r.stdout or b"").decode(errors="replace"), "err": (r.stderr or b"").decode(errors="replace")}
-
-    def _read(prefix):
-        p = Path(prefix)
-        subprocess.run(["docker", "cp", f"xhs-mcp:{prefix}", str(p)],
-                       capture_output=True, timeout=20)
-        if p.exists():
-            return p.read_text().strip()
-        return ""
-
-    # 第一步：只读检查当前页面（已有登录弹窗二维码 → 直接复用，不触发任何登录动作）
-    _run("--check")
-    state = _read("/tmp/qr_state.txt")
-    src = _read("/tmp/qr_src.txt")
-    b64 = _read("/tmp/qr_b64.txt")
-
-    if src.startswith("http"):
-        return {"ok": True, "image_url": src, "expires_in": 120}
-    if b64:
-        return {"ok": True, "image": b64, "expires_in": 120}
-    if state == "rate_limited":
-        return {"ok": False, "error": "平台限流冷却中（请勿频繁操作，稍后重试）。请等待一段时间后再试，期间不再自动触发登录。"}
-
-    # 第二步：页面无二维码且非限流 → 触发一次（短超时、不重试）
+    # 在 Chrome 中打开小红书首页（前台标签，用户可直接扫码）
     try:
-        mcp_call("get_login_qrcode", {}, timeout=25, attempts=1)
+        subprocess.run(
+            ["node", str(BASE / "scripts" / "browser" / "open-xhs-front.js")],
+            capture_output=True, timeout=60,
+        )
+        return {
+            "ok": True,
+            "guide": "请在打开的 Chrome 小红书首页中扫码登录；登录成功后本弹窗自动关闭。",
+            "url": "https://www.xiaohongshu.com/explore",
+            "expires_in": 300,
+        }
     except Exception as e:
-        return {"ok": False, "error": f"触发登录页失败（平台可能风控拦截，请稍后重试）：{e}"}
-    time.sleep(3)  # 等登录弹窗渲染
-
-    # 第三步：再提取一次
-    _run("--check")
-    src = _read("/tmp/qr_src.txt")
-    b64 = _read("/tmp/qr_b64.txt")
-    if src.startswith("http"):
-        return {"ok": True, "image_url": src, "expires_in": 120}
-    if b64:
-        return {"ok": True, "image": b64, "expires_in": 120}
-    state = _read("/tmp/qr_state.txt")
-    if state == "rate_limited":
-        return {"ok": False, "error": "平台限流冷却中（请勿频繁操作，稍后重试）。请等待一段时间后再试，期间不再自动触发登录。"}
-    return {"ok": False, "error": f"二维码暂未出现（页面状态：{state or '未知'}），请稍后重试。"}
+        return {"ok": False, "error": f"打开 Chrome 小红书首页失败：{str(e)[:100]}"}
 
 
 
@@ -170,24 +147,15 @@ def search(req: SearchReq):
     """搜索 → 详情+粉丝补全 → 评分 → 落库。返回新增条数与最新 TOP 评分。"""
     con = _db()
     before = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
-    source = "关键词搜索"
+    source = "关键词搜索（本地 Chrome）"
     try:
-        # 容器侧搜索页加载偏慢（新 cookie 首搜 + 页面渲染）；单次 55s 超时、不重试，仍失败再降级
-        res = mcp_call("search_feeds", {"keyword": req.keyword, "filters": {"sort_by": "综合"}}, timeout=55, attempts=1)
-        notes = parse_feeds(res)[: req.limit]
-    except Exception:
+        # 本地浏览器搜索：CDP 控制外部 Chrome（真实设备/真实登录态），DOM 层提取
+        notes = search_via_browser(req.keyword, req.limit)
+    except Exception as e:
         notes = []
+        search_err = str(e)
     if not notes:
-        # 搜索接口被平台限流（无头浏览器高频搜索触发）→ 自动降级首页推荐流，
-        # 保证采集链路不中断（首页流未受限，实测可用）。
-        try:
-            res = mcp_call("list_feeds", {}, timeout=90, attempts=2)
-            notes = parse_feeds(res)[: req.limit]
-            source = "首页推荐流（搜索被限，自动降级）"
-        except Exception:
-            return {"added": 0, "total": before, "top": [], "note": "搜索与推荐流均不可用（可能被限流，可稍后重试）"}
-    if not notes:
-        return {"added": 0, "total": before, "top": [], "note": "该关键词本轮返回 0 条（可能被限流，已尝试推荐流降级），可稍后重试"}
+        return {"added": 0, "total": before, "top": [], "note": f"搜索未返回结果（{search_err[:80]}），请确认 Chrome 已打开并登录小红书后重试"}
 
     cache = {}
     saved = 0
@@ -292,16 +260,17 @@ def note_detail(feed_id: str):
     if not r:
         raise HTTPException(404, "笔记不存在")
     n = dict(r)
-    # 尝试用 token 拉最新详情（含图片列表）
+    # 尝试用 token 拉最新详情（含图片列表）——本地浏览器 DOM 提取
     try:
-        res = mcp_call("get_feed_detail", {"feed_id": feed_id, "xsec_token": n.get("xsec_token", "")})
-        detail = res.get("data", {}).get("note", {})
-        if detail:
-            imgs = [i.get("urlDefault") or i.get("url") for i in detail.get("imageList", [])]
-            imgs = [u for u in imgs if u]
+        detail_note = dict(n)
+        detail_note = get_feed_detail(detail_note)
+        imgs = detail_note.get("detail_imgs") or []
+        if imgs:
             n["images"] = imgs
-            if detail.get("desc"):
-                n["desc"] = detail.get("desc")
+        if detail_note.get("desc"):
+            n["desc"] = detail_note.get("desc")
+        if detail_note.get("title"):
+            n["title"] = detail_note.get("title")
     except Exception:
         pass
     return n
@@ -321,18 +290,18 @@ def clone(req: CloneReq):
         raise HTTPException(404, "笔记不存在")
     n = dict(r)
 
-    # 图片列表（优先详情接口，其次封面）
+    # 图片列表（优先本地浏览器详情提取，其次封面）
     images = []
     detail_ok = False
     try:
-        res = mcp_call("get_feed_detail", {"feed_id": req.feed_id, "xsec_token": n.get("xsec_token", "")})
-        detail = res.get("data", {}).get("note", {})
-        if detail:
+        dn = dict(n)
+        dn = get_feed_detail(dn)
+        imgs = dn.get("detail_imgs") or []
+        if imgs:
             detail_ok = True
-            imgs = [i.get("urlDefault") or i.get("url") for i in detail.get("imageList", [])]
-            images = [u for u in imgs if u]
-            if detail.get("desc"):
-                n["desc"] = detail.get("desc")
+            images = imgs
+            if dn.get("desc"):
+                n["desc"] = dn.get("desc")
     except Exception:
         pass
     if not images and n.get("cover_url"):
@@ -365,67 +334,45 @@ _COOKIE_ORDER = ["web_session", "last_web_session", "a1", "webId", "gid", "id_to
 
 @app.get("/api/cookie_info")
 def cookie_info():
-    """返回容器 cookies.json 的当前内容摘要（界面「显示 Cookie」编辑框用，便于与 Chrome 对比）。"""
-    p = BASE / "docker" / "data" / "cookies.json"
-    if not p.exists():
-        return {"ok": False, "count": 0, "saved_at": "", "cookies": [], "error": "未找到容器 cookie 文件"}
+    """从外部 Chrome 实时读取小红书 cookie 摘要（界面「显示 Cookie」只读展示用）。
+    新架构下采集/登录都在同一个 Chrome 内完成，无跨环境搬运，故只读展示。"""
+    import re
+    import subprocess
+
+    root = Path(__file__).resolve().parents[3]
     try:
-        d = json.loads(p.read_text())
+        r = subprocess.run(
+            ["node", "scripts/browser/actions.js", "cookies"],
+            cwd=root, capture_output=True, timeout=90,
+        )
+        out = (r.stdout or b"").decode(errors="replace")
+        m = re.search(r"COOKIES:(\{.*\})", out, re.S)
+        if not m:
+            return {"ok": False, "count": 0, "saved_at": "", "cookies": [],
+                    "error": f"Chrome 读取失败: {(out or (r.stderr or b'').decode(errors='replace'))[:100]}"}
+        d = json.loads(m.group(1))
+        names = d.get("names", [])
+        items = []
+        for i, nm in enumerate(names):
+            items.append({"name": nm, "value": "", "domain": ".xiaohongshu.com", "ord": i})
+        items.sort(key=lambda x: (_COOKIE_ORDER.index(x["name"]) if x["name"] in _COOKIE_ORDER else 99, x["name"]))
+        ws = next((c.get("value", "") for c in [d.get("web_session")] if c), "")
+        return {
+            "ok": True,
+            "count": d.get("count", 0),
+            "saved_at": "",
+            "account": (ws[:8] + "…") if ws else "",
+            "cookies": items,
+        }
     except Exception as e:
-        return {"ok": False, "count": 0, "saved_at": "", "cookies": [], "error": f"cookie 文件解析失败：{e}"}
-    cs = d.get("cookies", [])
-    seen = {}
-    for c in cs:
-        seen.setdefault(c["name"], c)
-    items = [{"name": c["name"], "value": c["value"], "domain": c.get("domain", "")} for c in seen.values()]
-    items.sort(key=lambda x: (_COOKIE_ORDER.index(x["name"]) if x["name"] in _COOKIE_ORDER else 99, x["name"]))
-    return {"ok": True, "count": len(cs), "saved_at": d.get("saved_at", ""), "cookies": items}
+        return {"ok": False, "count": 0, "saved_at": "", "cookies": [], "error": f"本地浏览器读取失败: {str(e)[:100]}"}
 
 
 @app.post("/api/import_cookie")
 def import_cookie():
-    """一键从 Chrome 导入：CDP 导出（复用登录态）→ 校验 → 写容器 cookies.json → 重启容器。"""
-    import subprocess
-
-    script = str(BASE / "scripts" / "export_xhs_cookies.js")
-    try:
-        r = subprocess.run(["node", script], capture_output=True, timeout=120)
-        if r.returncode != 0 and not (BASE / "docker" / "data" / "cookies.json"):
-            pass  # 失败仍尝试读导出文件，交给下方校验
-    except Exception as e:
-        return {"ok": False, "error": f"导出脚本执行失败：{e}"}
-
-    exp = Path("/tmp/xhs_cookies_export.json")
-    if not exp.exists():
-        return {"ok": False, "error": "导出未生成文件（Chrome 未连接或未登录小红书）"}
-    try:
-        d = json.loads(exp.read_text())
-    except Exception:
-        return {"ok": False, "error": "导出文件解析失败"}
-    cs = d.get("cookies", [])
-    if not cs:
-        return {"ok": False, "error": "Chrome 中未找到小红书 cookie（请先在 Chrome 扫码登录）"}
-
-    dest = BASE / "docker" / "data" / "cookies.json"
-    if dest.exists():
-        dest.replace(dest.with_suffix(".json.bak"))  # 备份旧 cookie
-    dest.write_text(json.dumps(d, ensure_ascii=False, indent=2))
-
-    try:
-        subprocess.run(
-            ["docker", "compose", "-f", str(BASE / "docker" / "docker-compose.yml"), "restart", "xiaohongshu-mcp"],
-            capture_output=True, timeout=180, cwd=str(BASE),
-        )
-    except Exception as e:
-        return {"ok": False, "error": f"cookie 已写入但容器重启失败：{e}"}
-
-    ws = next((c["value"] for c in cs if c["name"] == "web_session"), "")
-    return {
-        "ok": True,
-        "count": len(cs),
-        "account": (ws[:8] + "…") if ws else "已登录",
-        "saved_at": d.get("saved_at", ""),
-    }
+    """导入 Cookie 功能已下线：新架构下采集/登录同在外部 Chrome（同环境），
+    无跨环境搬运需求；界面 Cookie 区保持只读实时展示。"""
+    return {"ok": False, "error": "导入功能已下线（采集与登录同在 Chrome 内，直接读取无需导入）"}
 
 
 # ================= 发布 =================
@@ -583,17 +530,14 @@ def publish(req: PublishReq):
             "raw": f"该文案 {DUPLICATE_WINDOW_HOURS} 小时内已发布过。平台对重复文案判定极严，请改写标题或正文。",
         }
 
-    # ⑧ 执行发布（MCP 容器内部节奏无法注入，靠调用频率与时机拟人化）
-    res = mcp_call("publish_content", {
-        "title": req.title[:20],
-        "content": req.content,
-        "tags": req.tags,
-        "visibility": req.visibility,
-        "images": [i for i in req.images if i],
-        "is_original": req.is_original,
-    }, timeout=120)
-    text = res.get("_raw_text") or json.dumps(res, ensure_ascii=False)
-    ok = "发布成功" in text or "内容发布成功" in text
+    # ⑧ 执行发布：Docker 已退役（2026-10-26 迁移：采集/登录迁到外部 Chrome）。
+    #    发布永远用户手动（产品红线）：后端只做校验与载荷准备，实际发布由用户在
+    #    Chrome 中手动完成（避免自动化发布触发平台风控）。载荷已随请求完整传给前端。
+    import urllib.parse
+    xhs_write_url = "https://www.xiaohongshu.com/write"
+    ok = False
+    text = "发布执行已迁移：请在 Chrome 小红书发布页手动发布（标题/正文/图片已就绪）。" \
+           f"发布页: {xhs_write_url}"
 
     con.execute(
         "INSERT INTO publish_logs (feed_id, title, content, tags, visibility, status, created_at) VALUES (?,?,?,?,?,?,?)",

@@ -7,29 +7,25 @@ const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const loading = ref(false)
-const qrImage = ref('')
+const guide = ref('')
+const guideOk = ref(false)
 const qrError = ref('')
-const qrCountdown = ref(120)
-const qrExpired = ref(false)
-let timer: ReturnType<typeof setInterval> | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-async function refreshQr() {
+async function openXhs() {
   loading.value = true
   qrError.value = ''
   try {
     const r = await apiQrcode()
     if (r.ok) {
-      qrImage.value = r.image_url || (r.image ? `data:image/png;base64,${r.image}` : '')
-      qrCountdown.value = r.expires_in || 90
-      qrExpired.value = false
+      guideOk.value = true
+      guide.value = r.guide || '请在打开的 Chrome 小红书首页中扫码登录'
     } else {
-      qrError.value = r.error || '二维码获取失败'
-      qrImage.value = ''
+      guideOk.value = false
+      qrError.value = r.error || '打开失败'
     }
   } catch (e) {
     qrError.value = (e as Error).message
-    qrImage.value = ''
   } finally {
     loading.value = false
   }
@@ -40,8 +36,8 @@ async function pollLogin() {
     const lg = await apiLoginStatus()
     if (lg.logged_in) {
       appState.login = { logged_in: true, nickname: lg.nickname || '' }
-      appState.cookieRefreshTick += 1 // 通知 Cookie 区刷新（容器扫码后 cookies.json 已更新）
-      toast('登录成功，已恢复容器登录态')
+      appState.cookieRefreshTick += 1 // 通知 Cookie 区刷新（Chrome 内登录后 cookie 已更新）
+      toast('登录成功，已恢复小红书登录态')
       stopTimers()
       emit('close')
     }
@@ -51,19 +47,11 @@ async function pollLogin() {
 }
 
 function stopTimers() {
-  if (timer) { clearInterval(timer); timer = null }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
 }
 
 onMounted(() => {
-  refreshQr()
-  timer = setInterval(() => {
-    qrCountdown.value -= 1
-    if (qrCountdown.value <= 0) {
-      qrExpired.value = true   // 过期提示 → 立即自动刷新拿新码
-      refreshQr()
-    }
-  }, 1000)
+  openXhs()
   pollTimer = setInterval(pollLogin, 4000)
 })
 
@@ -73,26 +61,26 @@ onUnmounted(stopTimers)
 <template>
   <div v-if="props.open" class="modal-mask" @click.self="emit('close')">
     <div class="modal qr-modal">
-      <h3>扫码登录小红书</h3>
+      <h3>登录小红书</h3>
       <p class="qr-tip">
-        容器内登录态已失效。请用手机小红书 App 扫码登录
-        （推荐使用当前演示账号），登录成功后自动继续。
+        小红书登录态已失效。已在你打开的 Chrome 中打开小红书首页，请直接扫码登录
+        （推荐使用当前演示账号），登录成功后本窗口自动关闭。
       </p>
       <div class="qr-stage">
-        <div v-if="loading" class="qr-loading">正在获取二维码…</div>
-        <div v-else-if="qrImage" class="qr-wrap" :class="{ expired: qrExpired }">
-          <img :src="qrImage" alt="登录二维码" class="qr-img" />
-          <div v-if="qrExpired" class="qr-expired-mask">二维码已过期，自动刷新中…</div>
+        <div v-if="loading" class="qr-loading">正在打开 Chrome 小红书首页…</div>
+        <div v-else-if="guideOk" class="qr-guide">
+          <p class="guide-main">{{ guide }}</p>
+          <p class="guide-sub">登录后自动继续（每 4s 检测一次登录状态）</p>
         </div>
         <div v-else class="qr-error">
           <p>{{ qrError }}</p>
-          <button class="btn" @click="refreshQr">重试获取二维码</button>
+          <button class="btn" @click="openXhs">重试打开</button>
         </div>
       </div>
       <div class="qr-meta">
-        <span v-if="qrImage">二维码 {{ qrCountdown }}s 后过期 · 扫码后自动验证（每 4s 检测）</span>
+        <span v-if="guideOk">检测中…</span>
         <span v-else>&nbsp;</span>
-        <button class="btn" @click="refreshQr" :disabled="loading">刷新二维码</button>
+        <button class="btn" @click="openXhs" :disabled="loading">重新打开</button>
       </div>
       <button class="close" @click="emit('close')">关闭</button>
     </div>
@@ -103,16 +91,12 @@ onUnmounted(stopTimers)
 .qr-modal { width: 380px; text-align: center; }
 .qr-tip { font-size: 13px; color: #666; line-height: 1.6; margin: 8px 0 12px; }
 .qr-stage {
-  min-height: 300px; display: flex; align-items: center; justify-content: center;
+  min-height: 200px; display: flex; align-items: center; justify-content: center;
   background: #fff; border: 1px solid #eee; border-radius: 8px; overflow: hidden;
+  padding: 16px;
 }
-.qr-img { width: 300px; height: auto; display: block; }
-.qr-wrap { position: relative; }
-.qr-wrap.expired img { filter: blur(2px) grayscale(.6); opacity: .5; }
-.qr-expired-mask {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  color: #E51F3A; font-size: 14px; font-weight: 600; background: rgba(255,255,255,.4);
-}
+.qr-guide .guide-main { font-size: 14px; color: #333; line-height: 1.6; }
+.qr-guide .guide-sub { font-size: 12px; color: #999; margin-top: 8px; }
 .qr-loading, .qr-error { color: #999; font-size: 13px; }
 .qr-error .btn { margin-top: 10px; }
 .qr-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 12px; color: #888; }

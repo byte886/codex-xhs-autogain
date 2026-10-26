@@ -96,64 +96,124 @@ def parse_feeds(search_result: dict) -> list[dict]:
     return notes
 
 
-def get_feed_detail(note: dict) -> dict:
-    """补全发布时间与完整互动数据。
+def _parse_likes(s: str) -> int:
+    """解析互动数：'151'→151, '1.2万'→12000, '999+'→999"""
+    if not s:
+        return 0
+    s = s.strip().replace(",", "")
+    m = re.match(r"([\d.]+)(万|w|W)?", s)
+    if not m:
+        return 0
+    v = float(m.group(1))
+    if m.group(2):
+        v *= 10000
+    return int(v)
 
-    get_feed_detail 返回结构：{ data: { note: {...} } }，
-    note.time 为毫秒级时间戳（如 1778155374000）→ 转秒存库。
+
+def search_via_browser(keyword: str, limit: int = 20) -> list[dict]:
+    """本地浏览器搜索（替代容器 search_feeds）：
+    通过 CDP 控制外部 Chrome（真实设备/真实登录态），DOM 层提取卡片。
+
+    返回与 parse_feeds 相同结构的 notes 列表（feed_id/xsec_token/title/nickname/cover_url/liked_count）。
     """
-    res = mcp_call("get_feed_detail", {
-        "feed_id": note["feed_id"],
-        "xsec_token": note["xsec_token"],
-    })
-    detail = res.get("data", {}).get("note", {}) or res.get("note", {})
-    if isinstance(detail, dict):
-        inter = detail.get("interactInfo", {})
-        ts = detail.get("time")
-        # time 为毫秒时间戳；兼容 int/float/字符串，解析失败置 None（不阻断落库）
-        if isinstance(ts, (int, float)):
-            note["publish_time"] = int(ts / 1000)
-        elif isinstance(ts, str) and ts.strip().isdigit():
-            note["publish_time"] = int(int(ts) / 1000)
-        else:
-            note["publish_time"] = None
-        note["liked_count"] = inter.get("likedCount", note.get("liked_count", "0"))
-        note["collected_count"] = inter.get("collectedCount", note.get("collected_count", "0"))
-        note["comment_count"] = inter.get("commentCount", note.get("comment_count", "0"))
-        note["shared_count"] = inter.get("sharedCount", note.get("shared_count", "0"))
-        note["desc"] = detail.get("desc", "")
-        note["ip_location"] = detail.get("ipLocation", "")
-        # 无标题笔记兜底（小红书允许无标题发布，正文常以#话题开头）：
-        # 取正文去掉话题标记后的首段前 20 字作为展示标题，保证采集/克隆不出现空标题
+    import subprocess
+
+    root = Path(__file__).resolve().parents[3]  # app/src/codex_xhs → 项目根
+    r = subprocess.run(
+        ["node", "scripts/browser/actions.js", "search", keyword],
+        cwd=root, capture_output=True, timeout=150,
+    )
+    out = (r.stdout or b"").decode(errors="replace")
+    m = re.search(r"SEARCH:(\{.*\})", out, re.S)
+    if not m:
+        raise RuntimeError(f"本地浏览器搜索无输出: {(r.stderr or b'').decode(errors='replace')[:120] or out[:120]}")
+    data = json.loads(m.group(1))
+    items = data.get("items", [])[:limit]
+    notes = []
+    for it in items:
+        href = it.get("href") or ""
+        xsec = ""
+        mm = re.search(r"xsec_token=([^&]+)", href)
+        if mm:
+            xsec = mm.group(1)
+        # author 形如 "昵称\n09-22"，去掉日期
+        author = (it.get("author") or "").replace("\n", " ")
+        nickname = re.sub(r"\s\d{2}-\d{2}$", "", author).strip() or author
+        notes.append({
+            "feed_id": it.get("id"),
+            "xsec_token": xsec,
+            "title": it.get("title", ""),
+            "type": "",
+            "user_id": None,
+            "nickname": nickname,
+            "avatar": "",
+            "liked_count": _parse_likes(it.get("likes", "")),
+            "shared_count": 0,
+            "comment_count": 0,
+            "collected_count": 0,
+            "cover_url": it.get("img", ""),
+        })
+    return notes
+
+
+def _run_browser(cmd: str, arg: str, tag: str, arg2: str = "") -> dict | None:
+    """调本地浏览器执行器（node scripts/browser/actions.js <cmd> <arg> [<arg2>]），
+    返回 stdout 中 `<TAG>:<json>` 的 dict；失败返回 None。"""
+    import subprocess
+
+    root = Path(__file__).resolve().parents[3]
+    try:
+        argv = ["node", "scripts/browser/actions.js", cmd, arg] + ([arg2] if arg2 else [])
+        r = subprocess.run(argv, cwd=root, capture_output=True, timeout=90)
+        out = (r.stdout or b"").decode(errors="replace")
+        m = re.search(rf"{tag}:(\{{.*\}})", out, re.S)
+        if not m:
+            return None
+        return json.loads(m.group(1))
+    except Exception:
+        return None
+
+
+def get_feed_detail(note: dict) -> dict:
+    """补全笔记详情（本地浏览器打开笔记页 DOM 提取标题/正文/作者/日期/图片）。
+
+    替代容器 get_feed_detail；无签名依赖，直接读渲染后的页面。
+    """
+    d = _run_browser("note", note.get("feed_id", ""), "NOTE", note.get("xsec_token", ""))
+    if d:
+        if d.get("title"):
+            note["title"] = d["title"]
+        if d.get("desc"):
+            note["desc"] = d["desc"]
+        # 无标题笔记兜底：取正文去掉话题标记后的首段前 20 字
         if not note.get("title") and note.get("desc"):
-            d = note["desc"].strip().lstrip("#").strip()
-            d = re.sub(r"\[.*?\]", "", d).strip()
-            note["title"] = d[:20]
+            dd = note["desc"].strip().lstrip("#").strip()
+            dd = re.sub(r"\[.*?\]", "", dd).strip()
+            note["title"] = dd[:20]
+        note["publish_time"] = None  # DOM 无毫秒时间戳；日期在 author 文本（如 09-22）
+        note["detail_imgs"] = d.get("imgs", [])
     time.sleep(REQUEST_INTERVAL[0] + random.random() * (REQUEST_INTERVAL[1] - REQUEST_INTERVAL[0]))
     return note
 
 
 def get_user_profile(note: dict, cache: dict) -> dict:
-    """拿作者粉丝数（按 user_id 缓存）。"""
+    """拿作者粉丝数（本地浏览器打开作者主页 DOM 提取；按 user_id 缓存）。"""
     uid = note.get("user_id")
     if not uid:
         return note
     if uid in cache:
         note["fans_count"] = cache[uid]
         return note
-    res = mcp_call("user_profile", {
-        "user_id": uid,
-        "xsec_token": note.get("xsec_token", ""),
-    })
+    u = _run_browser("user", uid, "USER")
     fans = 0
-    interactions = res.get("interactions", [])
-    if isinstance(interactions, list):
-        for it in interactions:
-            if it.get("type") == "fans":
-                try:
-                    fans = int(it.get("count", 0))
-                except (TypeError, ValueError):
-                    fans = 0
+    if u:
+        f = u.get("fans") or ""
+        if f:
+            m = re.match(r"([\d.]+)(万|w|W)?", f.replace(",", ""))
+            if m:
+                fans = int(float(m.group(1)) * 10000 if m.group(2) else float(m.group(1)))
+        if not fans and u.get("nickname"):
+            note["nickname"] = u["nickname"]
     cache[uid] = fans
     note["fans_count"] = fans
     time.sleep(REQUEST_INTERVAL[0] + random.random() * (REQUEST_INTERVAL[1] - REQUEST_INTERVAL[0]))
@@ -205,13 +265,13 @@ def main():
     seen = set()
     for kw in args.keywords:
         try:
-            res = mcp_call("search_feeds", {"keyword": kw, "filters": {"sort_by": "综合"}})
-            for n in parse_feeds(res):
+            notes_kw = search_via_browser(kw, args.limit)
+            for n in notes_kw:
                 if n["feed_id"] not in seen:
                     seen.add(n["feed_id"])
                     n["keyword"] = kw
                     all_notes.append(n)
-            print(f"      「{kw}」→ +{len(parse_feeds(res))} 条，累计去重 {len(all_notes)} 条")
+            print(f"      「{kw}」→ +{len(notes_kw)} 条，累计去重 {len(all_notes)} 条")
         except Exception as e:
             print(f"      「{kw}」失败: {e}")
         time.sleep(REQUEST_INTERVAL[0] + random.random() * (REQUEST_INTERVAL[1] - REQUEST_INTERVAL[0]))
