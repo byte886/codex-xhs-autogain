@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
-import { appState, setStage, selectedNotes, toast } from './store'
+import { appState, toast } from './store'
 import type { Note } from './types'
 import FlowBar from './components/FlowBar.vue'
 import CollectPanel from './components/CollectPanel.vue'
 import WorkArea from './components/WorkArea.vue'
-import FloatBar from './components/FloatBar.vue'
 import CardMenu from './components/CardMenu.vue'
 import PublishPage from './components/PublishPage.vue'
 
@@ -31,29 +30,15 @@ async function openPublish(note: Note) {
   await publishRef.value?.openFor(note)
 }
 
-async function cloneAll() {
-  const notes = selectedNotes()
-  if (!notes.length) return
-  // 视频笔记暂不支持一键克隆（需视频下载+视频上传通道，P 待办），排除并提示
-  const pics = notes.filter(n => n.note_type !== 'video')
-  const vids = notes.length - pics.length
-  if (!pics.length) {
-    toast('所选均为视频笔记，暂不支持一键克隆（视频克隆待办中）')
+// 单条克隆（对齐视频：克隆走卡片单条，不批量）
+async function cloneOne(note: Note) {
+  if (note.note_type === 'video') {
+    toast('视频笔记暂不支持一键克隆（视频克隆待办中）')
     return
   }
-  if (vids > 0) toast(`已跳过 ${vids} 条视频笔记（暂不支持视频克隆）`)
-  // 批量克隆：用第一张图文笔记进入发布页（其余排队处理）
-  const first = pics[0]
   appState.publishOpen = true
   await nextTick()
-  await publishRef.value?.openFor(first)
-  if (pics.length > 1) toast(`已进入第 1 条（共 ${pics.length} 条），其余可在发布后继续`)
-  appState.selected = {}
-}
-
-function collectClients() {
-  const notes = selectedNotes()
-  toast(`演示：采集 ${notes.length} 条笔记的互动用户名单（P4 实现）`)
+  await publishRef.value?.openFor(note)
 }
 
 function backFromPublish() {
@@ -75,10 +60,9 @@ function fmtTime(s: number) {
       <div class="workbench">
         <CollectPanel />
         <main class="work">
-          <WorkArea @menu="openMenu" />
+          <WorkArea @menu="openMenu" @clone="cloneOne" />
         </main>
       </div>
-      <FloatBar v-if="appState.stage === 'pick'" @clone-all="cloneAll" @collect-clients="collectClients" />
     </template>
 
     <template v-else>

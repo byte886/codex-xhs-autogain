@@ -5,7 +5,10 @@ import type { Note } from '../types'
 import CardGrid from './CardGrid.vue'
 import FilterRank from './FilterRank.vue'
 
-const emit = defineEmits<{ (e: 'menu', payload: { note: Note; x: number; y: number }): void }>()
+const emit = defineEmits<{
+  (e: 'menu', payload: { note: Note; x: number; y: number }): void
+  (e: 'clone', note: Note): void
+}>()
 
 const filterText = ref('')
 
@@ -53,23 +56,20 @@ function cloneFromRank(n: Note) {
       </div>
     </div>
 
-    <!-- 选择内容（一页式：评分徽标卡片 + 筛选 + 勾选 + 批量） -->
+    <!-- 选择内容（一页式：评分徽标卡片 + 筛选 + 勾选 + 单条克隆） -->
     <div v-else-if="appState.stage === 'pick'">
       <div class="info-bar">
-        <div class="info-item">
-          <span class="k">已选</span><span class="v">{{ Object.keys(appState.selected).length }}</span>
-        </div>
         <div class="info-item">
           <span class="k">评分模型</span><span class="v small">互动密度 × 内容结构 × 爆款潜力（卡片右上角分数）</span>
         </div>
         <div class="info-item">
-          <span class="k">操作提示</span><span class="v small">点击卡片勾选，右下角悬浮按钮批量操作</span>
+          <span class="k">操作提示</span><span class="v small">点击卡片勾选；卡片「一键克隆」单条进入发布，发布手动确认</span>
         </div>
       </div>
       <div class="filter-title" style="margin-bottom:10px">
         <input v-model="filterText" placeholder="请选标题,作者或UID" style="width:100%" />
       </div>
-      <CardGrid :notes="appState.notes" selectable :filter-text="filterText" @menu="emit('menu', $event)" />
+      <CardGrid :notes="appState.notes" selectable :filter-text="filterText" @menu="emit('menu', $event)" @clone="emit('clone', $event)" />
     </div>
   </div>
 </template>

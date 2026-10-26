@@ -251,3 +251,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(255, 36, 66,
   cursor: pointer; z-index: 2;
 }
 .card .open-link:hover { background: rgba(0, 0, 0, .8); }
+
+/* 卡片「一键克隆」单条按钮 */
+.card .clone-btn { width: 100%; margin-top: 8px; padding: 5px 0; font-size: 12px; }
+.card .clone-btn:disabled { opacity: .5; cursor: not-allowed; }

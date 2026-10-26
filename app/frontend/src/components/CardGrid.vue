@@ -12,6 +12,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'menu', payload: { note: Note; x: number; y: number }): void
+  (e: 'clone', note: Note): void
 }>()
 
 const filtered = computed(() => {
@@ -67,12 +68,12 @@ function openOrigin(note: Note) {
 }
 
 function selectAll() {
-  // 全选图文：只选中图文笔记（视频笔记不支持一键克隆，排除在外）
+  // 全选图文：只选中图文笔记（视频笔记暂不可克隆，仅图文可进克隆/导出）
   const visible = filtered.value
   const pics = visible.filter(n => n.note_type !== 'video')
   const vids = visible.length - pics.length
   pics.forEach(n => { appState.selected[n.feed_id] = true })
-  toast(vids > 0 ? `已全选 ${pics.length} 条图文（${vids} 条视频已排除，暂不支持克隆）` : `已全选 ${pics.length} 条图文`)
+  toast(vids > 0 ? `已全选 ${pics.length} 条图文（${vids} 条视频已排除）` : `已全选 ${pics.length} 条图文`)
 }
 
 function clearSelect() {
@@ -120,13 +121,12 @@ const selCount = computed(() => selectedCount())
 </script>
 
 <template>
-  <!-- 顶部批量条（对齐视频：网格上方） -->
-  <div class="batch" v-if="selectable && notes.length" style="margin-bottom:14px;justify-content:space-between">
-    <span style="color:#888;font-size:12px">已选 {{ selCount }} 篇</span>
+  <!-- 顶部批量条（对齐视频：全选图文 / 清空选择 / 下载图片包 / 导出JSON，克隆走卡片单条） -->
+  <div class="batch" v-if="selectable && notes.length" style="margin-bottom:14px;justify-content:flex-end">
     <div style="display:flex;gap:8px">
       <button class="b-btn" @click="selectAll">全选图文</button>
       <button class="b-btn" @click="clearSelect">清空选择</button>
-      <button class="b-btn" @click="toast('演示：下载选中图片 zip（P3 实现）')">下载图片</button>
+      <button class="b-btn" @click="toast('演示：下载选中图片 zip（P3 实现）')">下载图片包</button>
       <button class="b-btn" @click="exportJSON">导出 JSON</button>
       <button class="b-btn" @click="exportCSV">导出 CSV</button>
     </div>
@@ -171,6 +171,11 @@ const selCount = computed(() => selectedCount())
             {{ fmt(note.liked_count) }}
           </span>
         </div>
+        <button
+          class="b-btn mini clone-btn"
+          :disabled="note.note_type === 'video'"
+          @click.stop="note.note_type === 'video' ? toast('视频笔记暂不支持一键克隆（视频克隆待办中）') : emit('clone', note)"
+        >一键克隆</button>
       </div>
     </div>
   </div>
