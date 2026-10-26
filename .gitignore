@@ -23,3 +23,11 @@ __pycache__/
 app/.venv/
 app/target/
 app/src/codex_xhs/data/
+
+# --- 前端工程 ---
+app/frontend/node_modules/
+app/frontend/dist/
+
+# --- 原型自检产物（非交付物） ---
+docs/prototype/_shots/
+*.tsbuildinfo
