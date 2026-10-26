@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from codex_xhs.score import rank_notes  # noqa: E402
 
 MCP_URL = "http://localhost:18060/mcp"
-REQUEST_INTERVAL = (2.0, 5.0)  # 真人浏览节奏：请求间随机 2-5s，勿低于 2s（过快=bot 特征）
+REQUEST_INTERVAL = (1.0, 1.8)  # 真人浏览节奏：请求间随机 1-1.8s（用户拍板合理像人档，勿再调快）
 SESSION_MAX_NOTES = 20        # 单次采集会话最多 20 条（真人一次浏览的量级，勿一次拉太多）
 
 

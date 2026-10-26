@@ -18,3 +18,8 @@ __pycache__/
 
 # --- 本地环境 ---
 .DS_Store
+
+# --- 本地环境（新机器部署） ---
+app/.venv/
+app/target/
+app/src/codex_xhs/data/

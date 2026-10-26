@@ -112,9 +112,18 @@ def search(req: SearchReq):
     for n in notes:
         try:
             n["keyword"] = req.keyword
-            n = get_feed_detail(n)
-            n = get_user_profile(n, cache)
-            si = rank_notes([n])[0]["score_info"]
+            try:
+                n = get_feed_detail(n)          # 详情失败→用列表字段兜底
+            except Exception:
+                pass
+            try:
+                n = get_user_profile(n, cache)  # 作者失败→粉丝缺失，评分降级
+            except Exception:
+                pass
+            try:
+                si = rank_notes([n])[0]["score_info"]
+            except Exception:
+                si = {"score": 0.0, "tag": "评分失败", "fan_ratio": 0.0}
             con.execute(
                 "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (

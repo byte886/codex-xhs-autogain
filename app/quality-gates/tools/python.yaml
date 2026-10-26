@@ -5,13 +5,13 @@
 language: python
 
 crap_tool: crapper
-crap_install: bash /Users/wenjiechen/Doubao/skills/clean-code-gauntlet/tooling/bin/install-tools.sh && bash /Users/wenjiechen/Doubao/skills/clean-code-gauntlet/tooling/bin/patch-treesitter.sh
-crap_cmd: /Users/wenjiechen/Doubao/skills/clean-code-gauntlet/tooling/vendor/crapper/crapper
+crap_install: bash <GAUNTLET_DIR>/tooling/bin/install-tools.sh && bash <GAUNTLET_DIR>/tooling/bin/patch-treesitter.sh
+crap_cmd: <GAUNTLET_DIR>/tooling/vendor/crapper/crapper
 crap_ci_cmd: pip install pytest coverage && $RUNNER_TEMP/gauntlet/crapper/crapper
 
 mutation_tool: mutator
-mutation_install: bash /Users/wenjiechen/Doubao/skills/clean-code-gauntlet/tooling/bin/install-tools.sh && bash /Users/wenjiechen/Doubao/skills/clean-code-gauntlet/tooling/bin/patch-treesitter.sh
-mutation_cmd: /Users/wenjiechen/Doubao/skills/clean-code-gauntlet/tooling/vendor/mutator/mutator
+mutation_install: bash <GAUNTLET_DIR>/tooling/bin/install-tools.sh && bash <GAUNTLET_DIR>/tooling/bin/patch-treesitter.sh
+mutation_cmd: <GAUNTLET_DIR>/tooling/vendor/mutator/mutator
 
 coverage_tool: coverage.py
 coverage_install: pip install pytest coverage
@@ -24,8 +24,8 @@ architecture_cmd: lint-imports
 
 # DRY 维度（可选）：dryer（Bob 多语言版，支持 Python；已核验 README：--threshold 默认 0.82、--edn、--min-lines，跳过嵌套函数）
 dry_tool: dryer
-dry_install: bash /Users/wenjiechen/Doubao/skills/clean-code-gauntlet/tooling/bin/install-tools.sh && bash /Users/wenjiechen/Doubao/skills/clean-code-gauntlet/tooling/bin/patch-treesitter.sh
-dry_cmd: /Users/wenjiechen/Doubao/skills/clean-code-gauntlet/tooling/vendor/dryer/dryer --edn src/
+dry_install: bash <GAUNTLET_DIR>/tooling/bin/install-tools.sh && bash <GAUNTLET_DIR>/tooling/bin/patch-treesitter.sh
+dry_cmd: <GAUNTLET_DIR>/tooling/vendor/dryer/dryer --edn src/
 
 # 可选工具清单（社区备选，按需选用；主命令见上方 *_cmd，quality-check.sh 只跑主命令）
 # 复杂度：radon（CC/CRAP 单工具）

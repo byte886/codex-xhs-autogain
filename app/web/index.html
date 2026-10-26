@@ -171,7 +171,7 @@ $('#btn-search').addEventListener('click', async () => {
   if (!kw) { setLog($('#p1-log'), '⚠️ 请先输入关键词'); return; }
   const btn = $('#btn-search');
   btn.disabled = true; btn.textContent = '搜索中…';
-  $('#search-status').innerHTML = '<span class="spin"></span> 采集中（每条约 1-2 秒）';
+  $('#search-status').innerHTML = '<span class="spin"></span> 采集中（每条含详情/作者抓取，视平台响应约 10-40 秒，条间 1-2 秒人化间隔）';
   setLog($('#p1-log'), `开始搜索「${kw}」（上限 ${limit} 条）…`);
   try {
     const r = await fetch('/api/search', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ keyword: kw, limit }) });
