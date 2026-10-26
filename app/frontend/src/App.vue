@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
-import { appState, toast } from './store'
+import { nextTick, onMounted, ref } from 'vue'
+import { appState, setStage, toast } from './store'
 import type { Note } from './types'
 import FlowBar from './components/FlowBar.vue'
 import CollectPanel from './components/CollectPanel.vue'
@@ -8,7 +8,7 @@ import WorkArea from './components/WorkArea.vue'
 import CardMenu from './components/CardMenu.vue'
 import PublishPage from './components/PublishPage.vue'
 import LoginModal from './components/LoginModal.vue'
-import { apiLoginStatus } from './api'
+import { apiLoginStatus, apiNotes } from './api'
 
 const publishRef = ref<InstanceType<typeof PublishPage> | null>(null)
 
@@ -86,6 +86,18 @@ function fmtTime(s: number) {
   const r = s % 60
   return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`
 }
+
+// 启动时恢复上次采集结果：DB 已有笔记则直接进入「选择内容」（刷新/重开不丢现场，也不触发新搜索）
+onMounted(async () => {
+  try {
+    const r = await apiNotes('', 'score')
+    if (r.notes && r.notes.length) {
+      appState.notes = r.notes
+      appState.total = r.total
+      setStage('pick')
+    }
+  } catch { /* 后端未就绪静默 */ }
+})
 </script>
 
 <template>
