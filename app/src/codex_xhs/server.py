@@ -93,75 +93,73 @@ def login_status():
 
 @app.get("/api/qrcode")
 def qrcode():
-    """Cookie 失效时前端弹窗扫码用：触发容器登录页 → CDP 截图 → 返回二维码 PNG（base64）。
-
-    完整链路：get_login_qrcode 让容器浏览器打开登录弹窗 → 容器内 python 连 CDP 截图
-    → docker cp 出 → base64 回传前端。无需用户在应用外扫码或手工复制 cookie。
-    """
+    """Cookie 失效时前端弹窗扫码用：优先复用容器页面上已出现的登录弹窗二维码（含"设备登录超限"弹窗——扫码即可解锁）；
+    仅当页面无二维码时才触发一次 get_login_qrcode（低频率，避免加剧风控）。"""
     import base64
     import subprocess
     import time
 
-    try:
-        mcp_call("get_login_qrcode", {}, timeout=35, attempts=1)
-    except Exception as e:
-        return {"ok": False, "error": f"触发登录页失败（平台可能风控拦截，请稍后重试）：{e}"}
-    time.sleep(2.5)  # 等登录弹窗渲染
-
-    # 容器内脚本（持久放在 /app/data，重启容器不丢）：优先从页面 DOM 提取二维码 img src
     inner = "/app/data/cdp_qr.py"
     script_src = BASE / "scripts" / "cdp_qr.py"
     if script_src.exists():
         subprocess.run(["docker", "cp", str(script_src), f"xhs-mcp:{inner}"],
                        capture_output=True, timeout=30)
+
+    for _f in ("/tmp/qr_src.txt", "/tmp/qr_b64.txt", "/tmp/qr_state.txt"):
+        try: Path(_f).unlink()
+        except FileNotFoundError: pass
+
+    def _run(extra=""):
+        try:
+            r = subprocess.run(["docker", "exec", "xhs-mcp", "python3", inner, extra],
+                               capture_output=True, timeout=40)
+        except Exception as e:
+            return {"err": str(e), "out": ""}
+        return {"out": (r.stdout or b"").decode(errors="replace"), "err": (r.stderr or b"").decode(errors="replace")}
+
+    def _read(prefix):
+        p = Path(prefix)
+        subprocess.run(["docker", "cp", f"xhs-mcp:{prefix}", str(p)],
+                       capture_output=True, timeout=20)
+        if p.exists():
+            return p.read_text().strip()
+        return ""
+
+    # 第一步：只读检查当前页面（已有登录弹窗二维码 → 直接复用，不触发任何登录动作）
+    _run("--check")
+    state = _read("/tmp/qr_state.txt")
+    src = _read("/tmp/qr_src.txt")
+    b64 = _read("/tmp/qr_b64.txt")
+
+    if src.startswith("http"):
+        return {"ok": True, "image_url": src, "expires_in": 120}
+    if b64:
+        return {"ok": True, "image": b64, "expires_in": 120}
+    if state == "rate_limited":
+        return {"ok": False, "error": "平台限流冷却中（请勿频繁操作，稍后重试）。请等待一段时间后再试，期间不再自动触发登录。"}
+
+    # 第二步：页面无二维码且非限流 → 触发一次（短超时、不重试）
     try:
-        r = subprocess.run(["docker", "exec", "xhs-mcp", "python3", inner],
-                           capture_output=True, timeout=40)
+        mcp_call("get_login_qrcode", {}, timeout=25, attempts=1)
     except Exception as e:
-        return {"ok": False, "error": f"二维码提取执行失败：{e}"}
-    out = (r.stdout or "").decode()
+        return {"ok": False, "error": f"触发登录页失败（平台可能风控拦截，请稍后重试）：{e}"}
+    time.sleep(3)  # 等登录弹窗渲染
 
-    # 路径 A：拿到二维码 img 的 URL → 前端直接 <img src>（最干净）
-    qr_src = Path("/tmp/qr_src.txt")
-    subprocess.run(["docker", "cp", "xhs-mcp:/tmp/qr_src.txt", str(qr_src)],
-                   capture_output=True, timeout=20)
-    if qr_src.exists():
-        src = qr_src.read_text().strip()
-        if src.startswith("http"):
-            return {"ok": True, "image_url": src, "expires_in": 90}
-
-    # 路径 B：拿到 dataURI → base64 直接回传
-    qr_b64 = Path("/tmp/qr_b64.txt")
-    subprocess.run(["docker", "cp", "xhs-mcp:/tmp/qr_b64.txt", str(qr_b64)],
-                   capture_output=True, timeout=20)
-    if qr_b64.exists():
-        b64 = qr_b64.read_text().strip()
-        if b64:
-            return {"ok": True, "image": b64, "expires_in": 90}
-
-    # 路径 C（兜底）：整页截图 → 裁剪弹窗左侧二维码区
-    qr_tmp = Path("/tmp/qr.png")
-    subprocess.run(["docker", "cp", "xhs-mcp:/tmp/qr.png", str(qr_tmp)],
-                   capture_output=True, timeout=30)
-    if not qr_tmp.exists():
-        return {"ok": False, "error": f"未生成二维码截图（{r.stderr.decode()[-150:] if r.stderr else ''}）"}
-    try:
-        from PIL import Image
-        im = Image.open(qr_tmp)
-        W, H = im.size
-        # 登录弹窗居中，二维码在弹窗左侧：按整图比例裁（x 25-41%, y 11-23%）
-        box = (int(W * 0.25), int(H * 0.11), int(W * 0.42), int(H * 0.24))
-        im2 = im.crop(box)
-        import io
-        buf = io.BytesIO()
-        im2.save(buf, format="PNG")
-        img = base64.b64encode(buf.getvalue()).decode()
-        return {"ok": True, "image": img, "expires_in": 90}
-    except Exception as e:
-        return {"ok": False, "error": f"二维码截图裁剪失败：{e}"}
+    # 第三步：再提取一次
+    _run("--check")
+    src = _read("/tmp/qr_src.txt")
+    b64 = _read("/tmp/qr_b64.txt")
+    if src.startswith("http"):
+        return {"ok": True, "image_url": src, "expires_in": 120}
+    if b64:
+        return {"ok": True, "image": b64, "expires_in": 120}
+    state = _read("/tmp/qr_state.txt")
+    if state == "rate_limited":
+        return {"ok": False, "error": "平台限流冷却中（请勿频繁操作，稍后重试）。请等待一段时间后再试，期间不再自动触发登录。"}
+    return {"ok": False, "error": f"二维码暂未出现（页面状态：{state or '未知'}），请稍后重试。"}
 
 
-# ================= 搜索采集 =================
+
 class SearchReq(BaseModel):
     keyword: str
     limit: int = 20

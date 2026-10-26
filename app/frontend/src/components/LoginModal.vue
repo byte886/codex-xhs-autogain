@@ -9,7 +9,7 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const loading = ref(false)
 const qrImage = ref('')
 const qrError = ref('')
-const qrCountdown = ref(90)
+const qrCountdown = ref(120)
 let timer: ReturnType<typeof setInterval> | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
