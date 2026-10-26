@@ -27,8 +27,8 @@ REQUEST_INTERVAL = (1.0, 1.8)  # 真人浏览节奏：请求间随机 1-1.8s（�
 SESSION_MAX_NOTES = 20        # 单次采集会话最多 20 条（真人一次浏览的量级，勿一次拉太多）
 
 
-def mcp_call(tool: str, args: dict, timeout: int = 90) -> dict:
-    """调用 MCP 工具，返回 result.content[0].text 解析后的对象。断连/超时退避重试 3 次。"""
+def mcp_call(tool: str, args: dict, timeout: int = 90, attempts: int = 3) -> dict:
+    """调用 MCP 工具，返回 result.content[0].text 解析后的对象。断连/超时退避重试 attempts 次。"""
     body = {
         "jsonrpc": "2.0",
         "id": int(time.time() * 1000) % 100000,
@@ -36,7 +36,7 @@ def mcp_call(tool: str, args: dict, timeout: int = 90) -> dict:
         "params": {"name": tool, "arguments": args},
     }
     last_err = None
-    for attempt in range(3):
+    for attempt in range(attempts):
         try:
             req = urllib.request.Request(
                 MCP_URL,
@@ -109,7 +109,13 @@ def get_feed_detail(note: dict) -> dict:
     if isinstance(detail, dict):
         inter = detail.get("interactInfo", {})
         ts = detail.get("time")
-        note["publish_time"] = int(ts / 1000) if isinstance(ts, (int, float)) else ts
+        # time 为毫秒时间戳；兼容 int/float/字符串，解析失败置 None（不阻断落库）
+        if isinstance(ts, (int, float)):
+            note["publish_time"] = int(ts / 1000)
+        elif isinstance(ts, str) and ts.strip().isdigit():
+            note["publish_time"] = int(int(ts) / 1000)
+        else:
+            note["publish_time"] = None
         note["liked_count"] = inter.get("likedCount", note.get("liked_count", "0"))
         note["collected_count"] = inter.get("collectedCount", note.get("collected_count", "0"))
         note["comment_count"] = inter.get("commentCount", note.get("comment_count", "0"))

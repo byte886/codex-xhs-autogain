@@ -101,10 +101,24 @@ def search(req: SearchReq):
     """搜索 → 详情+粉丝补全 → 评分 → 落库。返回新增条数与最新 TOP 评分。"""
     con = _db()
     before = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
-    res = mcp_call("search_feeds", {"keyword": req.keyword, "filters": {"sort_by": "综合"}})
-    notes = parse_feeds(res)[: req.limit]
+    source = "关键词搜索"
+    try:
+        # 搜索被限时容器侧固定 60s panic；单次 65s 超时、不重试，快速降级避免拖死浏览器
+        res = mcp_call("search_feeds", {"keyword": req.keyword, "filters": {"sort_by": "综合"}}, timeout=65, attempts=1)
+        notes = parse_feeds(res)[: req.limit]
+    except Exception:
+        notes = []
     if not notes:
-        return {"added": 0, "total": before, "top": [], "note": "该关键词本轮返回 0 条（可能被限流，可稍后重试）"}
+        # 搜索接口被平台限流（无头浏览器高频搜索触发）→ 自动降级首页推荐流，
+        # 保证采集链路不中断（首页流未受限，实测可用）。
+        try:
+            res = mcp_call("list_feeds", {}, timeout=90, attempts=2)
+            notes = parse_feeds(res)[: req.limit]
+            source = "首页推荐流（搜索被限，自动降级）"
+        except Exception:
+            return {"added": 0, "total": before, "top": [], "note": "搜索与推荐流均不可用（可能被限流，可稍后重试）"}
+    if not notes:
+        return {"added": 0, "total": before, "top": [], "note": "该关键词本轮返回 0 条（可能被限流，已尝试推荐流降级），可稍后重试"}
 
     cache = {}
     saved = 0
@@ -125,7 +139,7 @@ def search(req: SearchReq):
             except Exception:
                 si = {"score": 0.0, "tag": "评分失败", "fan_ratio": 0.0}
             con.execute(
-                "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     n.get("feed_id"), req.keyword, n.get("title", ""), n.get("type", ""),
                     n.get("user_id"), n.get("nickname", ""), n.get("avatar", ""),
@@ -151,6 +165,7 @@ def search(req: SearchReq):
         "added": saved,
         "total": con.execute("SELECT COUNT(*) FROM notes").fetchone()[0],
         "top": [dict(r) for r in top],
+        "source": source,
     }
 
 
