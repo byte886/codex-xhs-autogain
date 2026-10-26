@@ -61,8 +61,12 @@ function isSel(note: Note) {
 }
 
 function selectAll() {
-  props.notes.forEach(n => { appState.selected[n.feed_id] = true })
-  toast(`已全选 ${props.notes.length} 条图文`)
+  // 全选图文：只选中图文笔记（视频笔记不支持一键克隆，排除在外）
+  const visible = filtered.value
+  const pics = visible.filter(n => n.note_type !== 'video')
+  const vids = visible.length - pics.length
+  pics.forEach(n => { appState.selected[n.feed_id] = true })
+  toast(vids > 0 ? `已全选 ${pics.length} 条图文（${vids} 条视频已排除，暂不支持克隆）` : `已全选 ${pics.length} 条图文`)
 }
 
 function clearSelect() {

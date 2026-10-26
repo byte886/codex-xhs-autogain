@@ -34,12 +34,20 @@ async function openPublish(note: Note) {
 async function cloneAll() {
   const notes = selectedNotes()
   if (!notes.length) return
-  // 批量克隆：用第一张笔记进入发布页（其余排队处理）
-  const first = notes[0]
+  // 视频笔记暂不支持一键克隆（需视频下载+视频上传通道，P 待办），排除并提示
+  const pics = notes.filter(n => n.note_type !== 'video')
+  const vids = notes.length - pics.length
+  if (!pics.length) {
+    toast('所选均为视频笔记，暂不支持一键克隆（视频克隆待办中）')
+    return
+  }
+  if (vids > 0) toast(`已跳过 ${vids} 条视频笔记（暂不支持视频克隆）`)
+  // 批量克隆：用第一张图文笔记进入发布页（其余排队处理）
+  const first = pics[0]
   appState.publishOpen = true
   await nextTick()
   await publishRef.value?.openFor(first)
-  if (notes.length > 1) toast(`已进入第 1 条（共 ${notes.length} 条），其余可在发布后继续`)
+  if (pics.length > 1) toast(`已进入第 1 条（共 ${pics.length} 条），其余可在发布后继续`)
   appState.selected = {}
 }
 
