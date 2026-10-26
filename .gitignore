@@ -38,3 +38,6 @@ docker/data/
 extension/background.js
 extension/content.js
 extension/manifest.json
+
+# --- 登录态敏感：cookie 落盘文件绝不入库 ---
+data/cookies*.json
