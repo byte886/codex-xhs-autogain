@@ -1,7 +1,7 @@
 // scripts/browser/open-xhs-front.js —— 在 Chrome 中打开小红书首页（前台标签）
 // 用途：Cookie 失效时前端引导用户扫码（登录发生在外部 Chrome 内）
 'use strict';
-const { connectDailyChrome, safeDisconnect, newBackgroundPage } = require('/Users/weiqiang/Doubao/skills/mac-system-toolkit/scripts/chrome-cdp/connect_browser.js');
+const { connectDailyChrome, safeDisconnect, newBackgroundPage } = require('./connect.js');
 
 (async () => {
   const browser = await connectDailyChrome();

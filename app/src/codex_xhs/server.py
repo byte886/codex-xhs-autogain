@@ -33,15 +33,12 @@ DB_PATH = BASE / "data" / "xhs_notes.db"
 WEB_DIR = BASE / "app" / "web"
 IMAGES_DIR = BASE / "docker" / "images"
 
-MCP_URL = "http://localhost:18060/mcp"
 _INTERVAL = (1.0, 1.8)
 
 from codex_xhs.score import rank_notes  # noqa: E402
 from codex_xhs.collect_pipeline import (  # noqa: E402
     get_feed_detail,
     get_user_profile,
-    mcp_call,
-    parse_feeds,
     search_via_browser,
 )
 

@@ -26,20 +26,22 @@ function xhsExtractSearchNotes(root = document) {
 }
 
 function xhsExtractNoteDetail(root = document) {
-  // 笔记详情页：标题/正文/作者/图片
+  // 笔记详情页：标题/正文/作者/图片（仅取笔记轮播图，排除头像/缩略图/相关推荐）
   const titleEl = root.querySelector('#detail-title, .title, h1');
   const descEl = root.querySelector('#detail-desc, .desc, .note-text');
   const authorEl = root.querySelector('.author-wrapper .name, .user-name, .author .name');
   const dateEl = root.querySelector('#date, .date, .publish-time');
-  const imgs = [...root.querySelectorAll('.swiper-slide img, #noteContainer img, .slide img')]
+  const imgs = [...root.querySelectorAll('.swiper-slide img, #noteContainer img, .slide img, .carousel img, [class*="slide"] img')]
     .map((i) => i.src || i.getAttribute('data-src') || null)
-    .filter(Boolean);
+    .filter((u) => u && /sns-webpic|sns-img|xhscdn\.com|sns-preview/i.test(u))  // 仅笔记图域名（排除头像/静态资源）
+    .filter((u, i, arr) => arr.indexOf(u) === i)                                 // 去重
+    .slice(0, 9);
   return {
     title: titleEl ? titleEl.innerText.trim() : '',
     desc: descEl ? descEl.innerText.trim() : '',
     author: authorEl ? authorEl.innerText.trim() : '',
     date: dateEl ? dateEl.innerText.trim() : '',
-    imgs: imgs.slice(0, 9),
+    imgs,
   };
 }
 

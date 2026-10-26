@@ -34,3 +34,7 @@ docs/prototype/_shots/
 docker/data/*.db
 .metrics/
 target/
+docker/data/
+extension/background.js
+extension/content.js
+extension/manifest.json

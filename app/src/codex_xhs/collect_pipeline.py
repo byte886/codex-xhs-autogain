@@ -16,84 +16,14 @@ import re
 import sqlite3
 import sys
 import time
-import urllib.request
 from pathlib import Path
 
 # 允许从任意 cwd 导入 score 模块
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from codex_xhs.score import rank_notes  # noqa: E402
 
-MCP_URL = "http://localhost:18060/mcp"
 REQUEST_INTERVAL = (1.0, 1.8)  # 真人浏览节奏：请求间随机 1-1.8s（用户拍板合理像人档，勿再调快）
 SESSION_MAX_NOTES = 20        # 单次采集会话最多 20 条（真人一次浏览的量级，勿一次拉太多）
-
-
-def mcp_call(tool: str, args: dict, timeout: int = 90, attempts: int = 3) -> dict:
-    """调用 MCP 工具，返回 result.content[0].text 解析后的对象。断连/超时退避重试 attempts 次。"""
-    body = {
-        "jsonrpc": "2.0",
-        "id": int(time.time() * 1000) % 100000,
-        "method": "tools/call",
-        "params": {"name": tool, "arguments": args},
-    }
-    last_err = None
-    for attempt in range(attempts):
-        try:
-            req = urllib.request.Request(
-                MCP_URL,
-                data=json.dumps(body).encode(),
-                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                raw = resp.read().decode()
-            # 可能为 SSE 或纯 JSON
-            if raw.startswith("event:"):
-                for line in raw.splitlines():
-                    if line.startswith("data:"):
-                        raw = line[5:].strip()
-                        break
-            j = json.loads(raw)
-            if "result" not in j:
-                raise RuntimeError(f"{tool} 调用失败: {j}")
-            content = j["result"]["content"]
-            text = content[0]["text"]
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                return {"_raw_text": text}
-        except Exception as e:
-            last_err = e
-            if attempt < 2:
-                time.sleep(3 * (attempt + 1))
-    raise RuntimeError(f"{tool} 重试 3 次仍失败: {last_err}")
-
-
-def parse_feeds(search_result: dict) -> list[dict]:
-    """从 search_feeds 返回里提取笔记卡片列表。"""
-    feeds = search_result.get("feeds", [])
-    notes = []
-    for f in feeds:
-        if f.get("modelType") != "note":
-            continue
-        nc = f.get("noteCard", {})
-        user = nc.get("user", {})
-        inter = nc.get("interactInfo", {})
-        notes.append({
-            "feed_id": f.get("id"),
-            "xsec_token": f.get("xsecToken"),
-            "title": nc.get("displayTitle", ""),
-            "type": nc.get("type", ""),
-            "user_id": user.get("userId"),
-            "nickname": user.get("nickname", ""),
-            "avatar": user.get("avatar", ""),
-            "liked_count": inter.get("likedCount", "0"),
-            "shared_count": inter.get("sharedCount", "0"),
-            "comment_count": inter.get("commentCount", "0"),
-            "collected_count": inter.get("collectedCount", "0"),
-            "cover_url": nc.get("cover", {}).get("urlPre") or nc.get("cover", {}).get("urlDefault", "") or nc.get("cover", {}).get("url", ""),
-        })
-    return notes
 
 
 def _parse_likes(s: str) -> int:
@@ -114,7 +44,7 @@ def search_via_browser(keyword: str, limit: int = 20) -> list[dict]:
     """本地浏览器搜索（替代容器 search_feeds）：
     通过 CDP 控制外部 Chrome（真实设备/真实登录态），DOM 层提取卡片。
 
-    返回与 parse_feeds 相同结构的 notes 列表（feed_id/xsec_token/title/nickname/cover_url/liked_count）。
+    返回与 search_via_browser 相同结构的 notes 列表（feed_id/xsec_token/title/nickname/cover_url/liked_count）。
     """
     import subprocess
 

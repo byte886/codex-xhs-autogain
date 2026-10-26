@@ -2,7 +2,6 @@
 // 替代 Docker 容器的 MCP 工具调用；执行路径：页面 DOM 层（避开签名问题）
 'use strict';
 const { connectDailyChrome, safeDisconnect } = require('./connect.js');
-
 const XHS = 'https://www.xiaohongshu.com';
 
 function usage() {
