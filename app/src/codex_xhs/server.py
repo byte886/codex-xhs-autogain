@@ -291,6 +291,75 @@ def clone(req: CloneReq):
     return n
 
 
+# ================= Cookie（显示 / 一键从 Chrome 导入） =================
+_COOKIE_ORDER = ["web_session", "last_web_session", "a1", "webId", "gid", "id_token", "acw_tc", "websectiga"]
+
+
+@app.get("/api/cookie_info")
+def cookie_info():
+    """返回容器 cookies.json 的当前内容摘要（界面「显示 Cookie」编辑框用，便于与 Chrome 对比）。"""
+    p = BASE / "docker" / "data" / "cookies.json"
+    if not p.exists():
+        return {"ok": False, "count": 0, "saved_at": "", "cookies": [], "error": "未找到容器 cookie 文件"}
+    try:
+        d = json.loads(p.read_text())
+    except Exception as e:
+        return {"ok": False, "count": 0, "saved_at": "", "cookies": [], "error": f"cookie 文件解析失败：{e}"}
+    cs = d.get("cookies", [])
+    seen = {}
+    for c in cs:
+        seen.setdefault(c["name"], c)
+    items = [{"name": c["name"], "value": c["value"], "domain": c.get("domain", "")} for c in seen.values()]
+    items.sort(key=lambda x: (_COOKIE_ORDER.index(x["name"]) if x["name"] in _COOKIE_ORDER else 99, x["name"]))
+    return {"ok": True, "count": len(cs), "saved_at": d.get("saved_at", ""), "cookies": items}
+
+
+@app.post("/api/import_cookie")
+def import_cookie():
+    """一键从 Chrome 导入：CDP 导出（复用登录态）→ 校验 → 写容器 cookies.json → 重启容器。"""
+    import subprocess
+
+    script = str(BASE / "scripts" / "export_xhs_cookies.js")
+    try:
+        r = subprocess.run(["node", script], capture_output=True, timeout=120)
+        if r.returncode != 0 and not (BASE / "docker" / "data" / "cookies.json"):
+            pass  # 失败仍尝试读导出文件，交给下方校验
+    except Exception as e:
+        return {"ok": False, "error": f"导出脚本执行失败：{e}"}
+
+    exp = Path("/tmp/xhs_cookies_export.json")
+    if not exp.exists():
+        return {"ok": False, "error": "导出未生成文件（Chrome 未连接或未登录小红书）"}
+    try:
+        d = json.loads(exp.read_text())
+    except Exception:
+        return {"ok": False, "error": "导出文件解析失败"}
+    cs = d.get("cookies", [])
+    if not cs:
+        return {"ok": False, "error": "Chrome 中未找到小红书 cookie（请先在 Chrome 扫码登录）"}
+
+    dest = BASE / "docker" / "data" / "cookies.json"
+    if dest.exists():
+        dest.replace(dest.with_suffix(".json.bak"))  # 备份旧 cookie
+    dest.write_text(json.dumps(d, ensure_ascii=False, indent=2))
+
+    try:
+        subprocess.run(
+            ["docker", "compose", "-f", str(BASE / "docker" / "docker-compose.yml"), "restart", "xiaohongshu-mcp"],
+            capture_output=True, timeout=180, cwd=str(BASE),
+        )
+    except Exception as e:
+        return {"ok": False, "error": f"cookie 已写入但容器重启失败：{e}"}
+
+    ws = next((c["value"] for c in cs if c["name"] == "web_session"), "")
+    return {
+        "ok": True,
+        "count": len(cs),
+        "account": (ws[:8] + "…") if ws else "已登录",
+        "saved_at": d.get("saved_at", ""),
+    }
+
+
 # ================= 发布 =================
 class PublishReq(BaseModel):
     title: str

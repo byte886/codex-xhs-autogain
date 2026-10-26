@@ -1,14 +1,33 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { appState, setStage, toast } from '../store'
-import { apiImportCookie, apiLoginStatus, apiNotes, apiSearch } from '../api'
+import { apiCookieInfo, apiImportCookie, apiLoginStatus, apiNotes, apiSearch } from '../api'
+import type { CookieItem } from '../api'
 
 const emit = defineEmits<{ (e: 'collect-started'): void }>()
 
 const showCookie = ref(false)
 const cookieModalOpen = ref(false)
 const importing = ref(false)
+const cookieItems = ref<CookieItem[]>([])
+const cookieInfo = ref({ count: 0, saved_at: '' })
 let timer: ReturnType<typeof setInterval> | null = null
+
+async function refreshCookieInfo() {
+  try {
+    const r = await apiCookieInfo()
+    if (r.ok) {
+      cookieItems.value = r.cookies
+      cookieInfo.value = { count: r.count, saved_at: r.saved_at }
+    }
+  } catch (e) {
+    /* 后端未就绪时静默 */
+  }
+}
+
+function cookieText(): string {
+  return cookieItems.value.map(c => `${c.name}=${c.value}`).join('\n')
+}
 
 const collectOptions = [
   { value: 'kw', label: '关键词搜索笔记', enabled: true },
@@ -71,7 +90,7 @@ async function importCookie() {
   try {
     const r = await apiImportCookie()
     if (r.ok) {
-      toast(`已从 Chrome 导入 Cookie，账号：${r.account || '已登录'}`)
+      toast(`已从 Chrome 导入 Cookie（${r.count} 条），账号：${r.account || '已登录'}`)
       const lg = await apiLoginStatus()
       if (lg.logged_in) appState.login = { logged_in: true, nickname: lg.nickname || '' }
     } else {
@@ -81,10 +100,12 @@ async function importCookie() {
     toast(`导入失败：${(e as Error).message}`)
   } finally {
     importing.value = false
+    refreshCookieInfo()
   }
 }
 
 onMounted(async () => {
+  refreshCookieInfo()
   try {
     const lg = await apiLoginStatus()
     appState.login = { logged_in: !!lg.logged_in, nickname: lg.nickname || '' }
@@ -157,9 +178,16 @@ onMounted(async () => {
           </button>
         </div>
         <div class="cookie-val" :class="{ show: showCookie }">
-          <span class="secret">web_session=7c0e41e7e6b8e2a5f4d39b8a1c2d3e4f5a6b7c8d</span>
-          &nbsp;
-          <span class="secret">xsec_token=a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6</span>
+          <textarea
+            v-if="showCookie"
+            readonly
+            :value="cookieText()"
+            spellcheck="false"
+            placeholder="加载中…"
+          ></textarea>
+          <span v-else class="secret">
+            {{ cookieInfo.count ? `${cookieInfo.count} 条 cookie（点击「显示 Cookie」查看）` : 'Cookie 信息未加载' }}
+          </span>
         </div>
         <label class="cookie-save">
           <input type="checkbox" checked /> 使用加密保存到本机，下次自动读取

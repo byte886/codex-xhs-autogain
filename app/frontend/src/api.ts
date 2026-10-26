@@ -61,6 +61,12 @@ export async function apiLogs(): Promise<LogItem[]> {
   return j(await fetch(`${BASE}/api/logs`))
 }
 
-export async function apiImportCookie(): Promise<{ ok: boolean; account?: string; error?: string }> {
+export async function apiImportCookie(): Promise<{ ok: boolean; count?: number; account?: string; error?: string }> {
   return j(await fetch(`${BASE}/api/import_cookie`, { method: 'POST' }))
+}
+
+export interface CookieItem { name: string; value: string; domain: string }
+
+export async function apiCookieInfo(): Promise<{ ok: boolean; count: number; saved_at: string; cookies: CookieItem[] }> {
+  return j(await fetch(`${BASE}/api/cookie_info`))
 }
