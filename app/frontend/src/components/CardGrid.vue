@@ -93,8 +93,9 @@ function exportJSON() {
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
   a.download = `xhs_notes_${Date.now()}.json`
+  document.body.appendChild(a)   // 必须挂载 DOM 才会真正触发下载
   a.click()
-  URL.revokeObjectURL(a.href)
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href) }, 1000)  // 延迟 revoke，等下载启动
   toast(`已导出 ${data.length} 条 JSON`)
 }
 
@@ -109,8 +110,9 @@ function exportCSV() {
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
   a.download = `xhs_notes_${Date.now()}.csv`
+  document.body.appendChild(a)   // 必须挂载 DOM 才会真正触发下载
   a.click()
-  URL.revokeObjectURL(a.href)
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href) }, 1000)  // 延迟 revoke
   toast(`已导出 ${dataCount()} 条 CSV`)
 }
 

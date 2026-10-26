@@ -153,6 +153,7 @@ async def search(req: SearchReq):
     con = _db()
     before = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
     source = "关键词搜索（本地 Chrome）"
+    search_err = ""
     try:
         # 本地浏览器搜索：Playwright 控制外部 Chrome（真实设备/真实登录态），DOM 层提取
         notes = await search_via_browser(req.keyword, req.limit)
