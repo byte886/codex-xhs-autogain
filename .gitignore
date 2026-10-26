@@ -31,3 +31,6 @@ app/frontend/dist/
 # --- 原型自检产物（非交付物） ---
 docs/prototype/_shots/
 *.tsbuildinfo
+docker/data/*.db
+.metrics/
+target/
