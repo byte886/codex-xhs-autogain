@@ -10,6 +10,8 @@ export interface Note {
   avatar: string | null
   cover_url: string | null
   xsec_token: string | null
+  /** 原作品链接（explore 页），供「打开原作品」跳转 */
+  origin?: string
   desc: string | null
   ip_location: string | null
   liked_count: number | null
