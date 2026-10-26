@@ -23,7 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from codex_xhs.score import rank_notes  # noqa: E402
 
 MCP_URL = "http://localhost:18060/mcp"
-REQUEST_INTERVAL = (1.2, 2.5)  # 随机抖动间隔，防风控
+REQUEST_INTERVAL = (2.0, 5.0)  # 真人浏览节奏：请求间随机 2-5s，勿低于 2s（过快=bot 特征）
+SESSION_MAX_NOTES = 20        # 单次采集会话最多 20 条（真人一次浏览的量级，勿一次拉太多）
 
 
 def mcp_call(tool: str, args: dict, timeout: int = 90) -> dict:
@@ -179,7 +180,7 @@ def init_db(path: Path) -> sqlite3.Connection:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("keywords", nargs="+", help="搜索关键词，可多个（如 翡翠 玉镯）")
-    parser.add_argument("--limit", type=int, default=50)
+    parser.add_argument("--limit", type=int, default=SESSION_MAX_NOTES, help=f"单会话采集上限（默认 {SESSION_MAX_NOTES}，真人浏览节奏）")
     parser.add_argument("--out", default=str(Path(__file__).resolve().parent / "data" / "xhs_notes.db"))
     args = parser.parse_args()
 

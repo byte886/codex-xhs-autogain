@@ -74,6 +74,11 @@ def _init_tables(con):
             status TEXT, note_url TEXT, created_at TEXT
         )
     """)
+    # v3 拟人化护栏需要 raw 列（风控熔断关键词检测）；老库补列
+    try:
+        con.execute("ALTER TABLE publish_logs ADD COLUMN raw TEXT")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
     con.commit()
 
 
@@ -244,15 +249,55 @@ class PublishReq(BaseModel):
     is_original: bool = False
 
 
-# 发布风控硬约束（2026-10-26 上线，依据 research/step5-小红书风控调研.md）
-#   证据：redbook 发帖间隔 3-4h；MediaUse 发布 ≥20min 间隔；NoobClaw 1 帖/天最稳；
-#         MediaUse/socai 同一文案 24h 拒发；出现验证码/风控 → 停写 ≥24h 绝不自动重试。
-#   - 两次发布最小间隔：PUBLISH_COOLDOWN_MIN 分钟
-#   - 每日发布上限：PUBLISH_DAILY_MAX（成功发布计数）
-#   - 同一标题+正文组合 24h 内拒绝（防重复文案）
-PUBLISH_COOLDOWN_MIN = 180
-PUBLISH_DAILY_MAX = 2
-DUPLICATE_WINDOW_HOURS = 24
+# 发布拟人化护栏（2026-10-26 v3 修订：合理像人档，保留自动化）
+#   依据 research/step5-小红书风控调研.md v3：
+#   - 被抓根因=频率过高（凌晨连发+30s 重试），非"用工具即死"
+#   - 合理像人：redbook 间隔 3-4h；MediaUse ≤3/h；真人创作者日更 1-3 条
+#   - 不取 NoobClaw 1帖/天蜗牛档；也不取"随时连发"的危险档
+#   - 所有动作过 human_delay() 随机延迟层，杜绝固定节奏
+#   - 风控信号 → 硬熔断 24h（人工解锁），绝不自动重试
+PUBLISH_COOLDOWN_MIN = 180          # 两次发布最小间隔（3h，redbook 下限）
+PUBLISH_COOLDOWN_JITTER = 15        # 间隔随机抖动 ±15min，打散固定节奏
+PUBLISH_DAILY_MAX = 2               # 每日成功发布上限（真人日更 1-3 条的保守侧）
+PUBLISH_DAILY_MAX_STR = "2"         # 提示文案用
+WEEKLY_MAX_DAYS = 6                 # 每周最多 6 个发布日（模拟真人每周有休息日）
+ACTIVE_HOUR_START = 10              # 仅 10:00-21:30 真人活跃时段可发布
+ACTIVE_HOUR_END = 21.5
+DUPLICATE_WINDOW_HOURS = 24         # 同一标题+正文 24h 拒发
+RISK_KEYWORDS = ("验证", "频繁", "风控", "拦截", "校验", "未跳转", "发布失败", "异常", "操作过快", "稍后再试")
+
+# 风控熔断：最近 N 小时内出现过风控类失败 → 拒绝一切发布（硬停，需人工解锁）
+RISK_BLOCK_HOURS = 24
+
+
+def human_delay(lo: float = 1.0, hi: float = 3.0):
+    """拟人化随机延迟：所有碰账号的动作在调用前先"思考"随机时长，杜绝固定节奏。"""
+    time.sleep(random.uniform(lo, hi))
+
+
+def _risk_blocked_until(con) -> str | None:
+    """最近 24h 内发布失败且命中风控关键词 → 返回熔断到期时间，否则 None。"""
+    since = (_now() - datetime.timedelta(hours=RISK_BLOCK_HOURS)).isoformat(timespec="seconds")
+    rows = con.execute(
+        "SELECT raw, created_at FROM publish_logs WHERE status='failed' AND created_at>=? ORDER BY id DESC LIMIT 5",
+        (since,),
+    ).fetchall()
+    for row in rows:
+        if any(kw in (row["raw"] or "") for kw in RISK_KEYWORDS):
+            until = datetime.datetime.fromisoformat(row["created_at"]) + datetime.timedelta(hours=RISK_BLOCK_HOURS)
+            if until > _now():
+                return until.isoformat(timespec="minutes")
+    return None
+
+
+def _publish_week_days(con) -> int:
+    """近 7 天有成功发布的日期数（模拟每周休息日）。"""
+    since = (_now() - datetime.timedelta(days=7)).isoformat(timespec="seconds")
+    row = con.execute(
+        "SELECT COUNT(DISTINCT date(created_at)) AS c FROM publish_logs WHERE status='success' AND created_at>=?",
+        (since,),
+    ).fetchone()
+    return row["c"] if row else 0
 
 
 def _now():
@@ -290,33 +335,65 @@ def _duplicate_published(con, title, content) -> bool:
 
 @app.post("/api/publish")
 def publish(req: PublishReq):
-    # ① 冷却检查：距上次发布不足 N 分钟 → 拒绝
+    # ① 拟人思考：发布前随机停顿 2-5s（像真人斟酌后再点）
+    human_delay(2.0, 5.0)
+
     con = _db()
-    ago = _last_publish_ago_minutes(con)
-    if ago is not None and ago < PUBLISH_COOLDOWN_MIN:
-        wait = PUBLISH_COOLDOWN_MIN - ago
+
+    # ② 风控熔断：近 24h 有风控类失败 → 硬停，人工解锁
+    blocked = _risk_blocked_until(con)
+    if blocked:
         return {
             "ok": False,
             "cooldown": True,
-            "raw": f"发布过于频繁：距上次发布仅 {ago:.0f} 分钟。平台安全间隔 3-4 小时（小红书对短时间连发很敏感），请等待 {wait:.0f} 分钟后重试。",
+            "raw": f"风控熔断中：近 24h 发布被平台拦截（验证码/频繁/拦截）。发布功能已自动停用至 {blocked}，请人工确认账号状态后再恢复。切勿自动重试。",
         }
 
-    # ② 每日上限：成功发布数已达上限 → 拒绝
+    # ③ 时段限制：仅真人活跃时段（10:00-21:30）可发布
+    hour = _now().hour + _now().minute / 60.0
+    if not (ACTIVE_HOUR_START <= hour <= ACTIVE_HOUR_END):
+        return {
+            "ok": False,
+            "cooldown": True,
+            "raw": f"当前 {_now().hour:02d}:{_now().minute:02d} 非真人活跃时段（仅 {ACTIVE_HOUR_START}:00-21:30 可发布）。真人不会半夜发笔记，请在白天发布。",
+        }
+
+    # ④ 冷却检查：距上次发布不足 N±抖动 分钟 → 拒绝
+    ago = _last_publish_ago_minutes(con)
+    limit = PUBLISH_COOLDOWN_MIN + random.uniform(0, PUBLISH_COOLDOWN_JITTER)
+    if ago is not None and ago < limit:
+        wait = limit - ago
+        return {
+            "ok": False,
+            "cooldown": True,
+            "raw": f"发布过于频繁：距上次发布仅 {ago:.0f} 分钟。平台对短时间连发很敏感（间隔 3-4 小时），请等待 {wait:.0f} 分钟后重试。",
+        }
+
+    # ⑤ 每日上限：成功发布数已达上限 → 拒绝
     if _publish_count_today(con) >= PUBLISH_DAILY_MAX:
         return {
             "ok": False,
             "cooldown": True,
-            "raw": f"今日发布已达上限（{PUBLISH_DAILY_MAX} 条）。每天每账号 1-2 条最安全，明日再发。",
+            "raw": f"今日发布已达上限（{PUBLISH_DAILY_MAX} 条）。真人日更 1-3 条，明天再发。",
         }
 
-    # ③ 文案防重：同一标题+正文 24h 内已成功发布 → 拒绝
+    # ⑥ 每周发布日 ≤6：模拟每周至少休息一天
+    if _publish_week_days(con) >= WEEKLY_MAX_DAYS:
+        return {
+            "ok": False,
+            "cooldown": True,
+            "raw": "本周已连续发布 6 天。真人每周会有休息日，请明天再发。",
+        }
+
+    # ⑦ 文案防重：同一标题+正文 24h 内已成功发布 → 拒绝
     if _duplicate_published(con, req.title, req.content):
         return {
             "ok": False,
             "cooldown": True,
-            "raw": f"该文案 {DUPLICATE_WINDOW_HOURS} 小时内已发布过。平台对重复文案判定极严（同文案 24h 拒发），请改写标题或正文。",
+            "raw": f"该文案 {DUPLICATE_WINDOW_HOURS} 小时内已发布过。平台对重复文案判定极严，请改写标题或正文。",
         }
 
+    # ⑧ 执行发布（MCP 容器内部节奏无法注入，靠调用频率与时机拟人化）
     res = mcp_call("publish_content", {
         "title": req.title[:20],
         "content": req.content,
