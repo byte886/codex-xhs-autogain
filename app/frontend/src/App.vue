@@ -7,11 +7,23 @@ import CollectPanel from './components/CollectPanel.vue'
 import WorkArea from './components/WorkArea.vue'
 import CardMenu from './components/CardMenu.vue'
 import PublishPage from './components/PublishPage.vue'
+import LoginModal from './components/LoginModal.vue'
+import { apiLoginStatus } from './api'
 
 const publishRef = ref<InstanceType<typeof PublishPage> | null>(null)
 
 const menuNote = ref<Note | null>(null)
 const menuPos = ref({ x: 0, y: 0 })
+
+const loginOpen = ref(false)
+function checkLogin() {
+  apiLoginStatus().then((lg) => {
+    appState.login = { logged_in: !!lg.logged_in, nickname: lg.nickname || '' }
+    // 容器登录态失效时自动弹出扫码窗口
+    if (!lg.logged_in && !appState.collecting) loginOpen.value = true
+  }).catch(() => { /* 后端未就绪静默 */ })
+}
+checkLogin()
 
 function openMenu(payload: { note: Note; x: number; y: number }) {
   menuNote.value = payload.note
@@ -64,7 +76,7 @@ function fmtTime(s: number) {
 
     <template v-if="!appState.publishOpen">
       <div class="workbench">
-        <CollectPanel />
+        <CollectPanel @open-login="loginOpen = true" />
         <main class="work">
           <WorkArea @menu="openMenu" @clone="cloneOne" @clients="collectClients" />
         </main>
@@ -76,6 +88,9 @@ function fmtTime(s: number) {
     </template>
 
     <CardMenu :note="menuNote" :x="menuPos.x" :y="menuPos.y" @clone="openPublish" @close="closeMenu" />
+
+    <!-- 登录二维码弹窗（Cookie 失效时自动弹出 / 可手动触发） -->
+    <LoginModal :open="loginOpen" @close="loginOpen = false" />
 
     <!-- 全局点击关闭菜单 -->
     <div v-if="menuNote" style="position:fixed;inset:0;z-index:55" @click="closeMenu"></div>

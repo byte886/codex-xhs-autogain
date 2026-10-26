@@ -91,6 +91,43 @@ def login_status():
     return {"status": "logged_in" if "已登录" in text else "not_logged_in", "raw": text[:200]}
 
 
+@app.get("/api/qrcode")
+def qrcode():
+    """Cookie 失效时前端弹窗扫码用：触发容器登录页 → CDP 截图 → 返回二维码 PNG（base64）。
+
+    完整链路：get_login_qrcode 让容器浏览器打开登录弹窗 → 容器内 python 连 CDP 截图
+    → docker cp 出 → base64 回传前端。无需用户在应用外扫码或手工复制 cookie。
+    """
+    import base64
+    import subprocess
+    import time
+
+    try:
+        mcp_call("get_login_qrcode", {}, timeout=90, attempts=1)
+    except Exception as e:
+        return {"ok": False, "error": f"触发登录页失败：{e}"}
+    time.sleep(2.5)  # 等登录弹窗渲染
+
+    # 容器内截图脚本（持久放在 /app/data，重启容器不丢）
+    inner = "/app/data/cdp_qr.py"
+    script_src = BASE / "scripts" / "cdp_qr.py"
+    if script_src.exists():
+        subprocess.run(["docker", "cp", str(script_src), f"xhs-mcp:{inner}"],
+                       capture_output=True, timeout=30)
+    try:
+        r = subprocess.run(["docker", "exec", "xhs-mcp", "python3", inner],
+                           capture_output=True, timeout=60)
+    except Exception as e:
+        return {"ok": False, "error": f"截图执行失败：{e}"}
+    qr_tmp = Path("/tmp/qr.png")
+    subprocess.run(["docker", "cp", "xhs-mcp:/tmp/qr.png", str(qr_tmp)],
+                   capture_output=True, timeout=30)
+    if not qr_tmp.exists():
+        return {"ok": False, "error": f"未生成二维码截图（{r.stderr.decode()[-150:] if r.stderr else ''}）"}
+    img = base64.b64encode(qr_tmp.read_bytes()).decode()
+    return {"ok": True, "image": img, "expires_in": 90}
+
+
 # ================= 搜索采集 =================
 class SearchReq(BaseModel):
     keyword: str
@@ -104,8 +141,8 @@ def search(req: SearchReq):
     before = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
     source = "关键词搜索"
     try:
-        # 搜索被限时容器侧固定 60s panic；单次 65s 超时、不重试，快速降级避免拖死浏览器
-        res = mcp_call("search_feeds", {"keyword": req.keyword, "filters": {"sort_by": "综合"}}, timeout=25, attempts=1)
+        # 容器侧搜索页加载偏慢（新 cookie 首搜 + 页面渲染）；单次 55s 超时、不重试，仍失败再降级
+        res = mcp_call("search_feeds", {"keyword": req.keyword, "filters": {"sort_by": "综合"}}, timeout=55, attempts=1)
         notes = parse_feeds(res)[: req.limit]
     except Exception:
         notes = []

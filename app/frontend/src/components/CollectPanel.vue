@@ -4,7 +4,7 @@ import { appState, setStage, toast } from '../store'
 import { apiCookieInfo, apiImportCookie, apiLoginStatus, apiNotes, apiSearch } from '../api'
 import type { CookieItem } from '../api'
 
-const emit = defineEmits<{ (e: 'collect-started'): void }>()
+const emit = defineEmits<{ (e: 'collect-started'): void; (e: 'open-login'): void }>()
 
 const showCookie = ref(false)
 const cookieModalOpen = ref(false)
@@ -176,6 +176,7 @@ onMounted(async () => {
           <button class="c-btn primary" :disabled="importing" @click="importCookie">
             {{ importing ? '导入中…' : '导入 Cookie（从浏览器）' }}
           </button>
+          <button class="c-btn" @click="emit('open-login')">扫码登录（容器）</button>
         </div>
         <div class="cookie-val" :class="{ show: showCookie }">
           <textarea

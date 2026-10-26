@@ -70,3 +70,7 @@ export interface CookieItem { name: string; value: string; domain: string }
 export async function apiCookieInfo(): Promise<{ ok: boolean; count: number; saved_at: string; cookies: CookieItem[] }> {
   return j(await fetch(`${BASE}/api/cookie_info`))
 }
+
+export async function apiQrcode(): Promise<{ ok: boolean; image?: string; expires_in?: number; error?: string }> {
+  return j(await fetch(`${BASE}/api/qrcode`))
+}
