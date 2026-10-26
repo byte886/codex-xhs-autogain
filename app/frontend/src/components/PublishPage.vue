@@ -23,18 +23,29 @@ type CloneTarget = Note | { feed_id: string; title: string; desc: string; images
 async function openFor(note: CloneTarget) {
   loading.value = true
   try {
-    // 支持两种来源：已有克隆载荷（批量）或按 feed_id 现拉
     if ('images' in note && note.images) {
+      // 已有克隆载荷：直接填充
       title.value = note.title || ''
       body.value = note.desc || ''
       images.value = note.images
     } else {
-      const p = await apiClone(note.feed_id)
-      title.value = p.title || ''
-      body.value = p.desc || ''
-      // 本地图优先（克隆时下载的 /app/images/...），其次外链列表
-      const locals = (p.images_local || []).filter(Boolean)
-      images.value = locals.length ? locals : (p.images || [])
+      // 秒开：先用列表已有数据（标题/正文/封面占位），后台拉克隆载荷补图，不阻塞编辑
+      title.value = note.title || ''
+      body.value = (note as Note).desc || ''
+      const localCover = (note as Note).local_cover || (note as Note).local_images?.[0] || ''
+      images.value = localCover ? [coverProxy(localCover)] : []
+      loading.value = false
+      apiClone(note.feed_id)
+        .then(p => {
+          const locals = (p.images_local || []).filter(Boolean)
+          if (locals.length) images.value = locals
+          else if (p.images?.length) images.value = p.images
+          if (p.desc) body.value = p.desc
+        })
+        .catch(() => {
+          /* 后台补图失败则保留占位封面，不打断编辑 */
+        })
+      return
     }
     tags.value = ''
     visible.value = '公开可见'
