@@ -9,15 +9,10 @@ import FloatBar from './components/FloatBar.vue'
 import CardMenu from './components/CardMenu.vue'
 import PublishPage from './components/PublishPage.vue'
 
-const workAreaRef = ref<InstanceType<typeof WorkArea> | null>(null)
 const publishRef = ref<InstanceType<typeof PublishPage> | null>(null)
 
 const menuNote = ref<Note | null>(null)
 const menuPos = ref({ x: 0, y: 0 })
-
-function onCollectStarted() {
-  workAreaRef.value?.onCollectStarted()
-}
 
 function openMenu(payload: { note: Note; x: number; y: number }) {
   menuNote.value = payload.note
@@ -67,9 +62,9 @@ function fmtTime(s: number) {
 
     <template v-if="!appState.publishOpen">
       <div class="workbench">
-        <CollectPanel @collect-started="onCollectStarted" />
+        <CollectPanel />
         <main class="work">
-          <WorkArea ref="workAreaRef" @menu="openMenu" />
+          <WorkArea @menu="openMenu" />
         </main>
       </div>
       <FloatBar v-if="appState.stage === 'pick'" @clone-all="cloneAll" @collect-clients="collectClients" />

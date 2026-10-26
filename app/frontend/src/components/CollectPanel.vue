@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { appState, setStage, toast } from '../store'
-import { apiImportCookie, apiLoginStatus, apiSearch } from '../api'
+import { apiImportCookie, apiLoginStatus, apiNotes, apiSearch } from '../api'
 
 const emit = defineEmits<{ (e: 'collect-started'): void }>()
 
 const showCookie = ref(false)
 const cookieModalOpen = ref(false)
 const importing = ref(false)
+let timer: ReturnType<typeof setInterval> | null = null
 
 const collectOptions = [
   { value: 'kw', label: '关键词搜索笔记', enabled: true },
@@ -35,17 +36,29 @@ async function doSearch() {
   appState.selected = {}
   appState.taskLabel = `${appState.params.keyword} · ${appState.params.sort} · ${appState.params.noteType}`
   appState.searchNote = ''
+  appState.elapsed = 0
+  if (timer) clearInterval(timer)
+  timer = setInterval(() => { appState.elapsed += 1 }, 1000)
   setStage('search')
   emit('collect-started')
   try {
     const r = await apiSearch(appState.params)
+    if (timer) { clearInterval(timer); timer = null }
     if (r.note) {
       appState.searchNote = r.note
       toast(r.note)
     } else {
       toast(`采集完成：新增 ${r.added} 条，共 ${r.total} 条`)
     }
+    // 拉取评分排序结果，自动推进到"筛选结果"阶段
+    const list = await apiNotes('', 'score')
+    appState.notes = list.notes
+    appState.total = list.total
+    appState.count = list.total
+    appState.status = '展示中'
+    setStage('filter')
   } catch (e) {
+    if (timer) { clearInterval(timer); timer = null }
     toast(`采集失败：${(e as Error).message}`)
     appState.status = '失败'
   } finally {

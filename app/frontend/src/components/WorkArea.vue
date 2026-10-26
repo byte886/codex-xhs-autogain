@@ -8,21 +8,6 @@ import FilterRank from './FilterRank.vue'
 const emit = defineEmits<{ (e: 'menu', payload: { note: Note; x: number; y: number }): void }>()
 
 const filterText = ref('')
-const timer = ref<ReturnType<typeof setInterval> | null>(null)
-
-function onCollectStarted() {
-  // 采集计时：从请求开始到完成
-  appState.elapsed = 0
-  if (timer.value) clearInterval(timer.value)
-  timer.value = setInterval(() => { appState.elapsed += 1 }, 1000)
-  // 后端同步返回后停止计时
-  setTimeout(() => {
-    if (timer.value) clearInterval(timer.value)
-    appState.status = '展示中'
-  }, 20000)
-}
-
-defineExpose({ onCollectStarted })
 
 function fmtTime(s: number) {
   const m = Math.floor(s / 60)
@@ -63,9 +48,6 @@ function cloneFromRank(n: Note) {
         </div>
         <div class="filter-title">
           <input v-model="filterText" placeholder="筛选标题…" style="width:100%" />
-        </div>
-        <div class="batch">
-          <button class="b-btn" @click="$emit('menu', { note: appState.notes[0] as Note, x: 0, y: 0 })" style="display:none"></button>
         </div>
       </div>
       <CardGrid :notes="appState.notes" :filter-text="filterText" @menu="emit('menu', $event)" />
