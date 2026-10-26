@@ -179,7 +179,9 @@ onMounted(async () => {
       <div class="sec-title">Cookie</div>
       <div class="cookie-box">
         <div class="cookie-actions">
-          <button class="c-btn" @click="showCookie = !showCookie">{{ showCookie ? '隐藏 Cookie' : '显示 Cookie' }}</button>
+          <button class="c-btn icon" title="显示/隐藏 Cookie" @click="showCookie = !showCookie">
+            {{ showCookie ? '▾' : '▸' }}
+          </button>
           <button class="c-btn primary" :disabled="importing" @click="importCookie">
             {{ importing ? '导入中…' : '导入 Cookie（从浏览器）' }}
           </button>

@@ -24,6 +24,8 @@ function checkLogin() {
   }).catch(() => { /* 后端未就绪静默 */ })
 }
 checkLogin()
+// 持续检测：采集途中 Cookie 失效也能自动弹（每 15s 重检一次）
+setInterval(checkLogin, 15000)
 
 function openMenu(payload: { note: Note; x: number; y: number }) {
   menuNote.value = payload.note
