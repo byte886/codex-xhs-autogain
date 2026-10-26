@@ -104,7 +104,7 @@ def search(req: SearchReq):
     source = "关键词搜索"
     try:
         # 搜索被限时容器侧固定 60s panic；单次 65s 超时、不重试，快速降级避免拖死浏览器
-        res = mcp_call("search_feeds", {"keyword": req.keyword, "filters": {"sort_by": "综合"}}, timeout=65, attempts=1)
+        res = mcp_call("search_feeds", {"keyword": req.keyword, "filters": {"sort_by": "综合"}}, timeout=25, attempts=1)
         notes = parse_feeds(res)[: req.limit]
     except Exception:
         notes = []
@@ -126,14 +126,9 @@ def search(req: SearchReq):
     for n in notes:
         try:
             n["keyword"] = req.keyword
-            try:
-                n = get_feed_detail(n)          # 详情失败→用列表字段兜底
-            except Exception:
-                pass
-            try:
-                n = get_user_profile(n, cache)  # 作者失败→粉丝缺失，评分降级
-            except Exception:
-                pass
+            # 轻量采集 v2：列表字段直接入库，不逐条抓详情/作者主页
+            #（每条详情+主页 ≈ 15s，20 条要 6 分钟；详情/作者在「一键克隆」时按需补全）
+            # 粉丝缺失 → 评分自动降级（低粉爆款判定无粉丝数据时走基础分）
             try:
                 si = rank_notes([n])[0]["score_info"]
             except Exception:
