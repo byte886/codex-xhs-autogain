@@ -19,7 +19,7 @@ async function refreshQr() {
   try {
     const r = await apiQrcode()
     if (r.ok) {
-      qrImage.value = `data:image/png;base64,${r.image}`
+      qrImage.value = r.image_url || (r.image ? `data:image/png;base64,${r.image}` : '')
       qrCountdown.value = r.expires_in || 90
     } else {
       qrError.value = r.error || '二维码获取失败'

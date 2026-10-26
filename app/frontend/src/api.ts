@@ -71,6 +71,6 @@ export async function apiCookieInfo(): Promise<{ ok: boolean; count: number; sav
   return j(await fetch(`${BASE}/api/cookie_info`))
 }
 
-export async function apiQrcode(): Promise<{ ok: boolean; image?: string; expires_in?: number; error?: string }> {
+export async function apiQrcode(): Promise<{ ok: boolean; image?: string; image_url?: string; expires_in?: number; error?: string }> {
   return j(await fetch(`${BASE}/api/qrcode`))
 }

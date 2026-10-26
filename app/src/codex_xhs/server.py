@@ -103,12 +103,12 @@ def qrcode():
     import time
 
     try:
-        mcp_call("get_login_qrcode", {}, timeout=90, attempts=1)
+        mcp_call("get_login_qrcode", {}, timeout=35, attempts=1)
     except Exception as e:
-        return {"ok": False, "error": f"触发登录页失败：{e}"}
+        return {"ok": False, "error": f"触发登录页失败（平台可能风控拦截，请稍后重试）：{e}"}
     time.sleep(2.5)  # 等登录弹窗渲染
 
-    # 容器内截图脚本（持久放在 /app/data，重启容器不丢）
+    # 容器内脚本（持久放在 /app/data，重启容器不丢）：优先从页面 DOM 提取二维码 img src
     inner = "/app/data/cdp_qr.py"
     script_src = BASE / "scripts" / "cdp_qr.py"
     if script_src.exists():
@@ -116,16 +116,49 @@ def qrcode():
                        capture_output=True, timeout=30)
     try:
         r = subprocess.run(["docker", "exec", "xhs-mcp", "python3", inner],
-                           capture_output=True, timeout=60)
+                           capture_output=True, timeout=40)
     except Exception as e:
-        return {"ok": False, "error": f"截图执行失败：{e}"}
+        return {"ok": False, "error": f"二维码提取执行失败：{e}"}
+    out = (r.stdout or "").decode()
+
+    # 路径 A：拿到二维码 img 的 URL → 前端直接 <img src>（最干净）
+    qr_src = Path("/tmp/qr_src.txt")
+    subprocess.run(["docker", "cp", "xhs-mcp:/tmp/qr_src.txt", str(qr_src)],
+                   capture_output=True, timeout=20)
+    if qr_src.exists():
+        src = qr_src.read_text().strip()
+        if src.startswith("http"):
+            return {"ok": True, "image_url": src, "expires_in": 90}
+
+    # 路径 B：拿到 dataURI → base64 直接回传
+    qr_b64 = Path("/tmp/qr_b64.txt")
+    subprocess.run(["docker", "cp", "xhs-mcp:/tmp/qr_b64.txt", str(qr_b64)],
+                   capture_output=True, timeout=20)
+    if qr_b64.exists():
+        b64 = qr_b64.read_text().strip()
+        if b64:
+            return {"ok": True, "image": b64, "expires_in": 90}
+
+    # 路径 C（兜底）：整页截图 → 裁剪弹窗左侧二维码区
     qr_tmp = Path("/tmp/qr.png")
     subprocess.run(["docker", "cp", "xhs-mcp:/tmp/qr.png", str(qr_tmp)],
                    capture_output=True, timeout=30)
     if not qr_tmp.exists():
         return {"ok": False, "error": f"未生成二维码截图（{r.stderr.decode()[-150:] if r.stderr else ''}）"}
-    img = base64.b64encode(qr_tmp.read_bytes()).decode()
-    return {"ok": True, "image": img, "expires_in": 90}
+    try:
+        from PIL import Image
+        im = Image.open(qr_tmp)
+        W, H = im.size
+        # 登录弹窗居中，二维码在弹窗左侧：按整图比例裁（x 25-41%, y 11-23%）
+        box = (int(W * 0.25), int(H * 0.11), int(W * 0.42), int(H * 0.24))
+        im2 = im.crop(box)
+        import io
+        buf = io.BytesIO()
+        im2.save(buf, format="PNG")
+        img = base64.b64encode(buf.getvalue()).decode()
+        return {"ok": True, "image": img, "expires_in": 90}
+    except Exception as e:
+        return {"ok": False, "error": f"二维码截图裁剪失败：{e}"}
 
 
 # ================= 搜索采集 =================
