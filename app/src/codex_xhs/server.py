@@ -128,7 +128,22 @@ def search(req: SearchReq):
             n["keyword"] = req.keyword
             # 轻量采集 v2：列表字段直接入库，不逐条抓详情/作者主页
             #（每条详情+主页 ≈ 15s，20 条要 6 分钟；详情/作者在「一键克隆」时按需补全）
-            # 粉丝缺失 → 评分自动降级（低粉爆款判定无粉丝数据时走基础分）
+            # 封面图采集时下载到本地（xhscdn 防盗链，浏览器直连会失败；失败不阻断落库）
+            cover_local = ""
+            if n.get("cover_url"):
+                try:
+                    cf = IMAGES_DIR / f"{n['feed_id']}_cover.jpg"
+                    if not cf.exists():
+                        reqh = urllib.request.Request(
+                            n["cover_url"],
+                            headers={"Referer": "https://www.xiaohongshu.com/", "User-Agent": "Mozilla/5.0"},
+                        )
+                        with urllib.request.urlopen(reqh, timeout=10) as resp:
+                            cf.write_bytes(resp.read())
+                    cover_local = f"/app/images/{n['feed_id']}_cover.jpg"
+                except Exception:
+                    cover_local = ""
+            n["local_cover"] = cover_local
             try:
                 si = rank_notes([n])[0]["score_info"]
             except Exception:
@@ -182,7 +197,14 @@ def notes(keyword: str = "", order: str = "score", tag: str = ""):
         sql += " ORDER BY fetched_at DESC"
     sql += " LIMIT 200"
     rows = con.execute(sql, params).fetchall()
-    return {"total": len(rows), "notes": [dict(r) for r in rows]}
+    out = []
+    for r in rows:
+        d = dict(r)
+        # 本地封面存在则替换为本地代理路径（xhscdn 防盗链，直连会 403）
+        cf = IMAGES_DIR / f"{d['feed_id']}_cover.jpg"
+        d["local_cover"] = f"/app/images/{d['feed_id']}_cover.jpg" if cf.exists() else ""
+        out.append(d)
+    return {"total": len(out), "notes": out}
 
 
 # ================= 单条详情 =================

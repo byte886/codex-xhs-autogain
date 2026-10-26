@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Note } from '../types'
+import { coverProxy } from '../store'
 import { appState, selectedCount, toast } from '../store'
 
 const props = defineProps<{
@@ -22,6 +23,21 @@ const filtered = computed(() => {
 function fmt(n: number | null | undefined): string {
   const v = n || 0
   return v >= 10000 ? (v / 10000).toFixed(1) + '万' : String(v)
+}
+
+/** 封面图：本地代理优先（防盗链），其次外链，再占位 */
+function coverOf(note: Note): string {
+  return coverProxy(note.local_images?.[0] || note.local_cover || note.cover_url)
+}
+
+const broken = new Set<string>()
+function onImgError(note: Note) {
+  broken.add(note.feed_id)
+}function phStyle(note: Note): Record<string, string> {
+  const palette = ['#9A6A2F', '#7B8C6B', '#B4553D', '#5A7D8C', '#8C6B7B']
+  let h = 0
+  for (const ch of note.feed_id || '') h = (h * 31 + ch.charCodeAt(0)) % 997
+  return { background: palette[h % palette.length] }
 }
 
 function onCardClick(note: Note, ev: MouseEvent) {
@@ -93,8 +109,14 @@ const selCount = computed(() => selectedCount())
       @click="onCardClick(note, $event)"
     >
       <div class="cover">
-        <img v-if="note.cover_url" :src="note.cover_url" alt="" loading="lazy" />
-        <div v-else class="ph" :style="{ background: '#9A6A2F' }">{{ (note.title || '图')[0] }}</div>
+        <img
+          v-if="coverOf(note) && !broken.has(note.feed_id)"
+          :src="coverOf(note)"
+          alt=""
+          loading="lazy"
+          @error="onImgError(note)"
+        />
+        <div v-else class="ph" :style="phStyle(note)">{{ (note.title || '图')[0] }}</div>
         <span class="badge-note">{{ note.note_type === 'video' ? '视频' : '图文' }}</span>
         <span class="check">✓</span>
       </div>

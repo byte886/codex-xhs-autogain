@@ -148,8 +148,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(255, 36, 66,
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
   padding: 12px 16px; display: flex; align-items: center; gap: 14px;
 }
-.rank-item .score { font-size: 22px; font-weight: 700; width: 64px; text-align: center; flex: none; }
+.rank-item .score { font-size: 22px; font-weight: 700; width: 56px; text-align: center; flex: none; }
 .rank-item.hot .score { color: var(--red); }
+.rank-item .rank-thumb { width: 52px; height: 52px; border-radius: 6px; overflow: hidden; flex: none; background: #F0F0F0; }
+.rank-item .rank-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .rank-item .bar { width: 4px; height: 34px; border-radius: 3px; flex: none; }
 .rank-item .info { flex: 1; min-width: 0; }
 .rank-item .info .t { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

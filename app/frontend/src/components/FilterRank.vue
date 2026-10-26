@@ -1,13 +1,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Note } from '../types'
+import { coverProxy } from '../store'
 
 const props = defineProps<{ notes: Note[] }>()
 const emit = defineEmits<{ (e: 'clone', note: Note): void }>()
 
+const broken = new Set<string>()
+
 const ranked = computed(() =>
   [...props.notes].sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 20)
 )
+
+function srcOf(n: Note): string {
+  return coverProxy(n.local_cover || n.cover_url)
+}
 
 function fmt(n: number | null | undefined): string {
   const v = n || 0
@@ -18,6 +25,12 @@ function fmt(n: number | null | undefined): string {
 <template>
   <div class="rank">
     <div v-for="(n, i) in ranked" :key="n.feed_id" class="rank-item" :class="{ hot: i === 0 }">
+      <div class="rank-thumb">
+        <img v-if="srcOf(n) && !broken.has(n.feed_id)" :src="srcOf(n)" alt="" loading="lazy" @error="broken.add(n.feed_id)" />
+        <div v-else style="width:100%;height:100%;background:#9A6A2F;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700">
+          {{ (n.title || '图')[0] }}
+        </div>
+      </div>
       <div class="score">{{ n.score?.toFixed(1) ?? '—' }}</div>
       <div class="bar" :style="{ background: n.cover_url ? '#9A6A2F' : '#9A6A2F' }"></div>
       <div class="info">

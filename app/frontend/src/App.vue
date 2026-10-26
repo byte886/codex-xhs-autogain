@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import { appState, setStage, selectedNotes, toast } from './store'
 import type { Note } from './types'
 import FlowBar from './components/FlowBar.vue'
@@ -26,6 +26,8 @@ function closeMenu() {
 async function openPublish(note: Note) {
   menuNote.value = null
   appState.publishOpen = true
+  // v-if 渲染 PublishPage 是异步的，必须等 DOM 挂载后才能拿到 ref
+  await nextTick()
   await publishRef.value?.openFor(note)
 }
 
@@ -35,6 +37,7 @@ async function cloneAll() {
   // 批量克隆：用第一张笔记进入发布页（其余排队处理）
   const first = notes[0]
   appState.publishOpen = true
+  await nextTick()
   await publishRef.value?.openFor(first)
   if (notes.length > 1) toast(`已进入第 1 条（共 ${notes.length} 条），其余可在发布后继续`)
   appState.selected = {}

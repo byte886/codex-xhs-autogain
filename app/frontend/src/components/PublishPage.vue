@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { appState, setStage, toast } from '../store'
+import { appState, coverProxy, setStage, toast } from '../store'
 import { apiClone, apiPublish } from '../api'
 import type { Note } from '../types'
 
@@ -32,7 +32,9 @@ async function openFor(note: CloneTarget) {
       const p = await apiClone(note.feed_id)
       title.value = p.title || ''
       body.value = p.desc || ''
-      images.value = p.images || []
+      // 本地图优先（克隆时下载的 /app/images/...），其次外链列表
+      const locals = (p.images_local || []).filter(Boolean)
+      images.value = locals.length ? locals : (p.images || [])
     }
     tags.value = ''
     visible.value = '公开可见'
@@ -109,7 +111,7 @@ async function publish() {
           <label>图片 <span class="limit">可调序 / 删改 / 追加</span></label>
           <div class="pub-imgs">
             <div v-for="(img, i) in images" :key="i" class="pub-img">
-              <img v-if="img" :src="img" alt="" />
+              <img v-if="img" :src="coverProxy(img)" alt="" />
               <span class="x" @click="removeImg(i)">×</span>
             </div>
             <div class="pub-img add" @click="toast('演示：追加图片（P3 实现）')">＋</div>

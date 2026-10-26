@@ -26,6 +26,8 @@ export interface Note {
   selected?: boolean
   /** 前端临时字段：展示用本地图片 */
   local_images?: string[]
+  /** 后端返回：本地代理封面（/app/images/...），空则用 cover_url */
+  local_cover?: string
 }
 
 export interface SearchParams {
@@ -49,6 +51,8 @@ export interface ClonePayload {
   desc: string
   images: string[]
   detail_ok: boolean
+  /** 本地图片（/app/images/...），优先于外链 images */
+  images_local?: string[]
 }
 
 export interface LoginStatus {

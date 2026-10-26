@@ -79,4 +79,11 @@ export const stageName: Record<Stage, string> = {
   pick: '选择作品 · 勾选目标'
 }
 
+/** 图片地址统一走本地代理：/app/images/x → /api/img?path=/app/images/x（xhscdn 防盗链） */
+export function coverProxy(u: string | null | undefined): string {
+  if (!u) return ''
+  if (u.startsWith('/app/images/')) return '/api/img?path=' + encodeURIComponent(u)
+  return u
+}
+
 export { readonly }
