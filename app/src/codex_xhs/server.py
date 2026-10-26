@@ -19,6 +19,7 @@ import random
 import sqlite3
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -130,20 +131,8 @@ def search(req: SearchReq):
             #（每条详情+主页 ≈ 15s，20 条要 6 分钟；详情/作者在「一键克隆」时按需补全）
             # 封面图采集时下载到本地（xhscdn 防盗链，浏览器直连会失败；失败不阻断落库）
             cover_local = ""
-            if n.get("cover_url"):
-                try:
-                    cf = IMAGES_DIR / f"{n['feed_id']}_cover.jpg"
-                    if not cf.exists():
-                        reqh = urllib.request.Request(
-                            n["cover_url"],
-                            headers={"Referer": "https://www.xiaohongshu.com/", "User-Agent": "Mozilla/5.0"},
-                        )
-                        with urllib.request.urlopen(reqh, timeout=10) as resp:
-                            cf.write_bytes(resp.read())
-                    cover_local = f"/app/images/{n['feed_id']}_cover.jpg"
-                except Exception:
-                    cover_local = ""
-            n["local_cover"] = cover_local
+            # 封面下载移出循环（循环后并发批量下载，网络 IO 并行不占拟人化节奏）
+            n["local_cover"] = ""
             try:
                 si = rank_notes([n])[0]["score_info"]
             except Exception:
@@ -166,6 +155,26 @@ def search(req: SearchReq):
             continue
         time.sleep(_INTERVAL[0] + random.random() * (_INTERVAL[1] - _INTERVAL[0]))
     con.commit()
+
+    # 封面并发下载（网络 IO 并行，不占拟人化请求节奏；已存在跳过）
+    def _dl_cover(n):
+        if not n.get("cover_url"):
+            return
+        cf = IMAGES_DIR / f"{n['feed_id']}_cover.jpg"
+        if cf.exists():
+            return
+        try:
+            reqh = urllib.request.Request(
+                n["cover_url"],
+                headers={"Referer": "https://www.xiaohongshu.com/", "User-Agent": "Mozilla/5.0"},
+            )
+            with urllib.request.urlopen(reqh, timeout=10) as resp:
+                cf.write_bytes(resp.read())
+        except Exception:
+            pass
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        list(ex.map(_dl_cover, notes))
 
     top = con.execute(
         "SELECT feed_id, title, nickname, liked_count, fans_count, score, tag, cover_url "
@@ -262,7 +271,8 @@ def clone(req: CloneReq):
         images = [n["cover_url"]]
 
     local_images = []
-    for idx, u in enumerate(images[:9]):
+    def _dl_one(idx_url):
+        idx, u = idx_url
         fname = f"{req.feed_id}_{idx}.jpg"
         dest = IMAGES_DIR / fname
         try:
@@ -270,9 +280,11 @@ def clone(req: CloneReq):
                 reqh = urllib.request.Request(u, headers={"Referer": "https://www.xiaohongshu.com/", "User-Agent": "Mozilla/5.0"})
                 with urllib.request.urlopen(reqh, timeout=20) as resp:
                     dest.write_bytes(resp.read())
-            local_images.append(f"/app/images/{fname}")
-        except Exception as e:
-            local_images.append("")  # 下载失败留空，前端提示
+            return f"/app/images/{fname}"
+        except Exception:
+            return ""
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        local_images = list(ex.map(_dl_one, enumerate(images[:9])))
 
     n["images_local"] = local_images
     n["detail_ok"] = detail_ok
