@@ -96,7 +96,7 @@ function exportJSON() {
   document.body.appendChild(a)   // 必须挂载 DOM 才会真正触发下载
   a.click()
   setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href) }, 1000)  // 延迟 revoke，等下载启动
-  toast(`已导出 ${data.length} 条 JSON`)
+  toast(`已导出 ${data.length} 条 JSON，文件已保存到浏览器下载目录`)
 }
 
 function exportCSV() {
@@ -113,7 +113,7 @@ function exportCSV() {
   document.body.appendChild(a)   // 必须挂载 DOM 才会真正触发下载
   a.click()
   setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href) }, 1000)  // 延迟 revoke
-  toast(`已导出 ${dataCount()} 条 CSV`)
+  toast(`已导出 ${dataCount()} 条 CSV，文件已保存到浏览器下载目录`)
 }
 
 function dataCount() {
