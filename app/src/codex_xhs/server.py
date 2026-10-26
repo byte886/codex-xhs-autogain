@@ -48,6 +48,11 @@ DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _img_name(feed_id: str, suffix: str = "cover") -> str:
+    """本地图片文件名：feed_id 含 #（XHS 原特征），# 在 URL 里是 fragment 会被截断 → 替换为 _。"""
+    return f"{feed_id.replace('#', '_')}_{suffix}.jpg"
+
+
 def _db() -> sqlite3.Connection:
     con = sqlite3.connect(str(DB_PATH))
     con.row_factory = sqlite3.Row
@@ -89,8 +94,8 @@ _LOGIN_CACHE = {"t": 0.0, "data": None}
 _LOGIN_CACHE_TTL = 30.0
 
 @app.get("/api/login_status")
-def login_status():
-    """本地浏览器登录态检测：经常驻浏览器守护（复用 Chrome 连接，不反复弹授权窗）。结果缓存 30s。"""
+async def login_status():
+    """本地浏览器登录态检测：经常驻 Playwright 连接（复用 Chrome 连接，不反复弹授权窗）。结果缓存 30s。"""
     import time
 
     now = time.monotonic()
@@ -99,7 +104,7 @@ def login_status():
 
     try:
         from codex_xhs import browser_client
-        st = browser_client.login_check()
+        st = await browser_client.login_check()
         ok = st.get("logged_in")
         result = {
             "status": "logged_in" if ok else "not_logged_in",
@@ -116,7 +121,7 @@ def login_status():
 
 
 @app.get("/api/qrcode")
-def qrcode():
+async def qrcode():
     """Cookie 失效时前端引导扫码：新架构（Docker 已退役）下登录发生在外部 Chrome 内，
     本接口负责在 Chrome 中打开小红书首页让用户直接扫码，并返回引导信息。
     前端配合轮询 /api/login_status 直到登录成功。"""
@@ -125,7 +130,7 @@ def qrcode():
     # 在 Chrome 中打开小红书首页（前台标签，用户可直接扫码）——经常驻 Playwright 连接，不额外弹窗
     try:
         from codex_xhs import browser_client
-        browser_client.open_front()
+        await browser_client.open_front()
         return {
             "ok": True,
             "guide": "请在打开的 Chrome 小红书首页中扫码登录；登录成功后点「我已扫码完成」检测。",
@@ -143,14 +148,14 @@ class SearchReq(BaseModel):
 
 
 @app.post("/api/search")
-def search(req: SearchReq):
+async def search(req: SearchReq):
     """搜索 → 详情+粉丝补全 → 评分 → 落库。返回新增条数与最新 TOP 评分。"""
     con = _db()
     before = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
     source = "关键词搜索（本地 Chrome）"
     try:
-        # 本地浏览器搜索：CDP 控制外部 Chrome（真实设备/真实登录态），DOM 层提取
-        notes = search_via_browser(req.keyword, req.limit)
+        # 本地浏览器搜索：Playwright 控制外部 Chrome（真实设备/真实登录态），DOM 层提取
+        notes = await search_via_browser(req.keyword, req.limit)
     except Exception as e:
         notes = []
         search_err = str(e)
@@ -196,7 +201,7 @@ def search(req: SearchReq):
     def _dl_cover(n):
         if not n.get("cover_url"):
             return
-        cf = IMAGES_DIR / f"{n['feed_id']}_cover.jpg"
+        cf = IMAGES_DIR / _img_name(n["feed_id"])
         if cf.exists():
             return
         try:
@@ -246,15 +251,15 @@ def notes(keyword: str = "", order: str = "score", tag: str = ""):
     for r in rows:
         d = dict(r)
         # 本地封面存在则替换为本地代理路径（xhscdn 防盗链，直连会 403）
-        cf = IMAGES_DIR / f"{d['feed_id']}_cover.jpg"
-        d["local_cover"] = f"/app/images/{d['feed_id']}_cover.jpg" if cf.exists() else ""
+        cf = IMAGES_DIR / _img_name(d["feed_id"])
+        d["local_cover"] = f"/app/images/{_img_name(d['feed_id'])}" if cf.exists() else ""
         out.append(d)
     return {"total": len(out), "notes": out}
 
 
 # ================= 单条详情 =================
 @app.get("/api/note/{feed_id}")
-def note_detail(feed_id: str):
+async def note_detail(feed_id: str):
     con = _db()
     r = con.execute("SELECT * FROM notes WHERE feed_id=?", (feed_id,)).fetchone()
     if not r:
@@ -263,7 +268,7 @@ def note_detail(feed_id: str):
     # 尝试用 token 拉最新详情（含图片列表）——本地浏览器 DOM 提取
     try:
         detail_note = dict(n)
-        detail_note = get_feed_detail(detail_note)
+        detail_note = await get_feed_detail(detail_note)
         imgs = detail_note.get("detail_imgs") or []
         if imgs:
             n["images"] = imgs
@@ -282,8 +287,8 @@ class CloneReq(BaseModel):
 
 
 @app.post("/api/clone")
-def clone(req: CloneReq):
-    """克隆：取详情 → 下载图片到 docker/images → 返回可编辑载荷。"""
+async def clone(req: CloneReq):
+    """克隆：取详情 → 下载图片到 images → 返回可编辑载荷。"""
     con = _db()
     r = con.execute("SELECT * FROM notes WHERE feed_id=?", (req.feed_id,)).fetchone()
     if not r:
@@ -295,7 +300,7 @@ def clone(req: CloneReq):
     detail_ok = False
     try:
         dn = dict(n)
-        dn = get_feed_detail(dn)
+        dn = await get_feed_detail(dn)
         imgs = dn.get("detail_imgs") or []
         if imgs:
             detail_ok = True
@@ -310,7 +315,7 @@ def clone(req: CloneReq):
     local_images = []
     def _dl_one(idx_url):
         idx, u = idx_url
-        fname = f"{req.feed_id}_{idx}.jpg"
+        fname = _img_name(req.feed_id, suffix=f"p{idx}")
         dest = IMAGES_DIR / fname
         try:
             if not dest.exists():
@@ -333,12 +338,12 @@ _COOKIE_ORDER = ["web_session", "last_web_session", "a1", "webId", "gid", "id_to
 
 
 @app.get("/api/cookie_info")
-def cookie_info():
+async def cookie_info():
     """从外部 Chrome 实时读取小红书 cookie 摘要（界面「显示 Cookie」只读展示用）。
-    新架构下采集/登录都在同一个 Chrome 内完成，无跨环境搬运，故只读展示。经常驻守护复用连接。"""
+    新架构下采集/登录都在同一个 Chrome 内完成，无跨环境搬运，故只读展示。经常驻 Playwright 连接。"""
     try:
         from codex_xhs import browser_client
-        d = browser_client.cookies()
+        d = await browser_client.cookies()
         names = d.get("names", [])
         items = []
         for i, nm in enumerate(names):
@@ -560,6 +565,8 @@ def img_proxy(path: str = ""):
 
 # ================= 静态前端 =================
 app.mount("/assets", StaticFiles(directory=str(WEB_DIR / "assets")), name="assets")
+# 本地封面图静态服务（xhscdn 图床按 Referer 防盗链，本地代理同源访问无 403）
+app.mount("/app/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
 
 
 @app.get("/")

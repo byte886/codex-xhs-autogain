@@ -32,9 +32,9 @@ function fmt(n: number | null | undefined): string {
   return v >= 10000 ? (v / 10000).toFixed(1) + '万' : String(v)
 }
 
-/** 封面图：搜索封面优先（正方形缩略图），本地代理兜底；local_images 为详情图仅作最后兜底 */
+/** 封面图：本地代理优先（同源无防盗链 403），图床直连兜底（no-referrer 绕过 Referer 校验） */
 function coverOf(note: Note): string {
-  return coverProxy(note.cover_url || note.local_cover || note.local_images?.[0] || '')
+  return note.local_cover || coverProxy(note.cover_url || note.local_images?.[0] || '')
 }
 
 const broken = new Set<string>()
@@ -146,6 +146,7 @@ const selCount = computed(() => selectedCount())
           :src="coverOf(note)"
           alt=""
           loading="lazy"
+          referrerpolicy="no-referrer"
           @error="onImgError(note)"
         />
         <div v-else class="ph" :style="phStyle(note)">{{ (note.title || '图')[0] }}</div>

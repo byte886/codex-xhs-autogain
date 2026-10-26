@@ -40,14 +40,14 @@ def _parse_likes(s: str) -> int:
     return int(v)
 
 
-def search_via_browser(keyword: str, limit: int = 20) -> list[dict]:
+async def search_via_browser(keyword: str, limit: int = 20) -> list[dict]:
     """本地浏览器搜索（Playwright 复用 Chrome 连接，DOM 层提取卡片）。
 
     返回 notes 列表（feed_id/xsec_token/title/nickname/cover_url/liked_count）。
     """
     from codex_xhs import browser_client
 
-    data = browser_client.search(keyword, limit)
+    data = await browser_client.search(keyword, limit)
     items = data.get("items", [])[:limit]
     notes = []
     for it in items:
@@ -76,26 +76,26 @@ def search_via_browser(keyword: str, limit: int = 20) -> list[dict]:
     return notes
 
 
-def _run_browser(cmd: str, arg: str, tag: str, arg2: str = "") -> dict | None:
+async def _run_browser(cmd: str, arg: str, tag: str, arg2: str = "") -> dict | None:
     """经常驻 Playwright 连接调浏览器执行（note/user），复用连接不弹窗。失败返回 None。"""
     from codex_xhs import browser_client
 
     try:
         if cmd == "note":
-            return browser_client.note(arg, arg2) or None
+            return (await browser_client.note(arg, arg2)) or None
         if cmd == "user":
-            return browser_client.user(arg) or None
+            return (await browser_client.user(arg)) or None
         return None
     except Exception:  # noqa: BLE001
         return None
 
 
-def get_feed_detail(note: dict) -> dict:
+async def get_feed_detail(note: dict) -> dict:
     """补全笔记详情（本地浏览器打开笔记页 DOM 提取标题/正文/作者/日期/图片）。
 
     替代容器 get_feed_detail；无签名依赖，直接读渲染后的页面。
     """
-    d = _run_browser("note", note.get("feed_id", ""), "NOTE", note.get("xsec_token", ""))
+    d = await _run_browser("note", note.get("feed_id", ""), "NOTE", note.get("xsec_token", ""))
     if d:
         if d.get("title"):
             note["title"] = d["title"]
@@ -112,7 +112,7 @@ def get_feed_detail(note: dict) -> dict:
     return note
 
 
-def get_user_profile(note: dict, cache: dict) -> dict:
+async def get_user_profile(note: dict, cache: dict) -> dict:
     """拿作者粉丝数（本地浏览器打开作者主页 DOM 提取；按 user_id 缓存）。"""
     uid = note.get("user_id")
     if not uid:
@@ -120,7 +120,7 @@ def get_user_profile(note: dict, cache: dict) -> dict:
     if uid in cache:
         note["fans_count"] = cache[uid]
         return note
-    u = _run_browser("user", uid, "USER")
+    u = await _run_browser("user", uid, "USER")
     fans = 0
     if u:
         f = u.get("fans") or ""
@@ -172,6 +172,11 @@ def main():
     parser.add_argument("--limit", type=int, default=SESSION_MAX_NOTES, help=f"单会话采集上限（默认 {SESSION_MAX_NOTES}，真人浏览节奏）")
     parser.add_argument("--out", default=str(Path(__file__).resolve().parent / "data" / "xhs_notes.db"))
     args = parser.parse_args()
+    import asyncio
+    asyncio.run(_main_cli(args))
+
+
+async def _main_cli(args):
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     con = init_db(Path(args.out))
@@ -181,7 +186,7 @@ def main():
     seen = set()
     for kw in args.keywords:
         try:
-            notes_kw = search_via_browser(kw, args.limit)
+            notes_kw = await search_via_browser(kw, args.limit)
             for n in notes_kw:
                 if n["feed_id"] not in seen:
                     seen.add(n["feed_id"])
@@ -220,8 +225,8 @@ def main():
     cache = {}
     for i, n in enumerate(todo):
         try:
-            n = get_feed_detail(n)
-            n = get_user_profile(n, cache)
+            n = await get_feed_detail(n)
+            n = await get_user_profile(n, cache)
             n["score_info"] = rank_notes([n])[0]["score_info"]
             upsert(n)
             if (i + 1) % 10 == 0 or (i + 1) == len(todo):
