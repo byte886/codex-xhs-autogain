@@ -18,7 +18,7 @@ export const appState = reactive({
   total: 0,
   count: 0,
   taskLabel: '',
-  status: '采集中',
+  status: '搜索中',
   elapsed: 0,
   searchNote: '',
   // 勾选
@@ -47,7 +47,7 @@ export function toast(msg: string) {
 
 export function setStage(s: Stage) {
   appState.stage = s
-  if (s === 'search') appState.status = '采集中'
+  if (s === 'search') appState.status = '搜索中'
 }
 
 export function toggleSelect(feedId: string) {
@@ -74,9 +74,9 @@ export function selectedNotes(): Note[] {
 export const stageOrder: Stage[] = ['input', 'search', 'filter', 'pick']
 export const stageName: Record<Stage, string> = {
   input: '待输入 · 理解任务，等待输入',
-  search: '搜索作品 · 采集中…',
+  search: '搜索作品 · 搜索中…',
   filter: '筛选结果 · 评分排序',
-  pick: '选择作品 · 勾选目标'
+  pick: '选择内容 · 勾选目标'
 }
 
 /** 图片地址统一走本地代理：/app/images/x → /api/img?path=/app/images/x（xhscdn 防盗链） */

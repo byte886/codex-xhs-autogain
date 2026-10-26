@@ -32,7 +32,7 @@ async function doSearch() {
     return
   }
   appState.collecting = true
-  appState.status = '采集中'
+  appState.status = '搜索中'
   appState.selected = {}
   appState.taskLabel = `${appState.params.keyword} · ${appState.params.sort} · ${appState.params.noteType}`
   appState.searchNote = ''

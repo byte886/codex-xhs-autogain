@@ -40,14 +40,14 @@ function cloneFromRank(n: Note) {
         </div>
         <div class="info-item">
           <span class="k">状态</span>
-          <span class="status-pill" :class="{ running: appState.status === '采集中', done: appState.status === '展示中' }">{{ appState.status }}</span>
+          <span class="status-pill" :class="{ running: appState.status === '搜索中', done: appState.status === '展示中' }">{{ appState.status }}</span>
         </div>
         <div class="info-item">
-          <span class="k">已采集</span><span class="v">{{ appState.notes.length }}</span>
-          <span class="v small">{{ fmtTime(appState.elapsed) }}</span>
+          <span class="k">已完成</span><span class="v">{{ appState.notes.length }}</span>
+          <span class="v small">{{ appState.elapsed }}s</span>
         </div>
         <div class="filter-title">
-          <input v-model="filterText" placeholder="筛选标题…" style="width:100%" />
+          <input v-model="filterText" placeholder="请选标题,作者或UID" style="width:100%" />
         </div>
       </div>
       <CardGrid :notes="appState.notes" :filter-text="filterText" @menu="emit('menu', $event)" />
@@ -70,7 +70,7 @@ function cloneFromRank(n: Note) {
     <div v-else-if="appState.stage === 'pick'">
       <div class="info-bar">
         <div class="info-item">
-          <span class="k">已选择</span><span class="v">{{ Object.keys(appState.selected).length }}</span>
+          <span class="k">已选</span><span class="v">{{ Object.keys(appState.selected).length }}</span>
         </div>
         <div class="info-item">
           <span class="k">操作提示</span><span class="v small">点击卡片勾选，右下角悬浮按钮批量操作</span>

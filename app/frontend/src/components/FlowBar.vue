@@ -6,7 +6,7 @@ const steps = [
   { s: 'input', label: '待输入' },
   { s: 'search', label: '搜索作品' },
   { s: 'filter', label: '筛选结果' },
-  { s: 'pick', label: '选择作品' }
+  { s: 'pick', label: '选择内容' }
 ] as const
 
 const cur = computed(() => appState.stage)
