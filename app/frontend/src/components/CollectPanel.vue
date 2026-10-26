@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { appState, setStage, toast } from '../store'
-import { apiCookieInfo, apiLoginStatus, apiNotes, apiSearch } from '../api'
-import type { CookieItem } from '../api'
+import { apiCookieInfo, apiImportCookieText, apiLoginStatus, apiNotes, apiSearch } from '../api'
+import type { CookieItem, ImportCookieResult } from '../api'
 
 const emit = defineEmits<{ (e: 'collect-started'): void; (e: 'open-login'): void }>()
 
 const showCookie = ref(false)
 const cookieItems = ref<CookieItem[]>([])
 const cookieInfo = ref({ count: 0, saved_at: '' })
+const showImport = ref(false)
+const importText = ref('')
+const importing = ref(false)
+const importResult = ref<ImportCookieResult | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
 
 async function refreshCookieInfo() {
@@ -76,10 +80,40 @@ async function doSearch() {
     setStage('pick')
   } catch (e) {
     if (timer) { clearInterval(timer); timer = null }
-    toast(`采集失败：${(e as Error).message}`)
+    const msg = (e as Error).message
+    toast(`采集失败：${msg}`)
     appState.status = '失败'
+    // 登录态失效（后端熔断 403）→ 引导用户导入 Cookie 或扫码登录
+    if (msg.includes('登录态')) emit('open-login')
   } finally {
     appState.collecting = false
+  }
+}
+
+// 导入 Cookie：粘贴文本 → 后端解析并注入独立浏览器校验有效性 → 展示结果
+async function doImportCookie() {
+  if (importing.value) return
+  const text = importText.value.trim()
+  if (!text) { toast('请先粘贴 Cookie 文本（name=value; 格式）'); return }
+  importing.value = true
+  importResult.value = null
+  try {
+    const r = await apiImportCookieText(text)
+    importResult.value = r
+    if (r.ok) {
+      toast(`Cookie 有效：${r.account || '已登录'}（${r.count} 条）已保存`)
+      refreshCookieInfo()
+    } else {
+      toast(r.error || 'Cookie 无效')
+      // 无效 → 引导扫码登录兜底
+      emit('open-login')
+    }
+  } catch (e) {
+    const msg = (e as Error).message
+    importResult.value = { ok: false, error: msg }
+    toast(`导入失败：${msg}`)
+  } finally {
+    importing.value = false
   }
 }
 
@@ -158,6 +192,9 @@ onMounted(async () => {
             {{ showCookie ? '▾' : '▸' }}
           </button>
           <button class="c-btn" @click="emit('open-login')">去 Chrome 扫码登录</button>
+          <button class="c-btn" @click="showImport = !showImport">
+            {{ showImport ? '收起导入' : '导入 Cookie' }}
+          </button>
         </div>
         <div class="cookie-val" :class="{ show: showCookie }">
           <textarea
@@ -170,6 +207,27 @@ onMounted(async () => {
           <span v-else class="secret">
             {{ cookieInfo.count ? `${cookieInfo.count} 条 cookie（点击「显示 Cookie」查看）` : 'Cookie 信息未加载' }}
           </span>
+        </div>
+        <!-- 导入 Cookie 面板：粘贴 → 校验 → 结果 -->
+        <div v-if="showImport" class="cookie-import">
+          <textarea
+            v-model="importText"
+            spellcheck="false"
+            placeholder="粘贴 Cookie 文本：web_session=xxx; a1=yyy; …（或每行一条 name=value）"
+          ></textarea>
+          <div class="cookie-import-actions">
+            <button class="c-btn" @click="doImportCookie" :disabled="importing">
+              {{ importing ? '校验中…' : '校验并导入' }}
+            </button>
+            <button class="c-btn" @click="emit('open-login')">去 Chrome 扫码登录</button>
+          </div>
+          <p v-if="importResult" class="import-result" :class="{ err: !importResult.ok }">
+            {{ importResult.ok ? `✔ 有效（${importResult.account || '已登录'}，${importResult.count} 条已保存）` : `✘ ${importResult.error}` }}
+          </p>
+          <p class="import-hint">
+            导入的 Cookie 将在独立浏览器（生产 APP 环境）中校验并启用，不污染当前 Chrome 日常登录态。
+            失效时搜索/克隆/采集会被拦截，请在此导入新 Cookie 或扫码登录。
+          </p>
         </div>
         <label class="cookie-save">
           <input type="checkbox" checked /> 使用加密保存到本机，下次自动读取

@@ -156,9 +156,21 @@ class SearchReq(BaseModel):
     limit: int = 20
 
 
+async def _require_login():
+    """登录态熔断：搜索/克隆/采集客户前检查登录态（30s 缓存，不反复连 Chrome）。
+    仅当明确判定为「未登录」时拦截；检测异常（unknown）放行，避免误伤。"""
+    st = await login_status()
+    if st.get("status") == "not_logged_in":
+        raise HTTPException(
+            403,
+            "小红书登录态已失效：请导入有效 Cookie（左侧面板「导入 Cookie」）或去 Chrome 扫码登录后重试",
+        )
+
+
 @app.post("/api/search")
 async def search(req: SearchReq):
     """搜索 → 详情+粉丝补全 → 评分 → 落库。返回新增条数与最新 TOP 评分。"""
+    await _require_login()
     con = _db()
     before = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
     source = "关键词搜索（本地 Chrome）"
@@ -330,6 +342,7 @@ class CloneReq(BaseModel):
 @app.post("/api/clone")
 async def clone(req: CloneReq):
     """克隆：取详情 → 下载图片到 images → 返回可编辑载荷。"""
+    await _require_login()
     con = _db()
     r = con.execute("SELECT * FROM notes WHERE feed_id=?", (req.feed_id,)).fetchone()
     if not r:
@@ -386,6 +399,7 @@ async def collect_clients(req: ClientsReq):
 
     图文与视频笔记均支持（评论区都有互动用户）。每次采集访问一次真实页面，频次受浏览器全局锁约束。
     """
+    await _require_login()
     try:
         from codex_xhs import browser_client
         users = await browser_client.clients(req.feed_id, req.xsec_token)
@@ -433,11 +447,78 @@ async def cookie_info():
         return {"ok": False, "count": 0, "saved_at": "", "cookies": [], "error": f"本地浏览器读取失败: {str(e)[:100]}"}
 
 
+class ImportCookieReq(BaseModel):
+    cookie_text: str = ""
+
+
+def _parse_cookie_text(text: str) -> list[dict]:
+    """解析导入的 Cookie 文本：支持 `k=v; k2=v2` 与每行一条 name=value。
+    返回 Playwright/CDP 可用的 cookie 列表（域固定小红书）。"""
+    out = []
+    for seg in text.replace("\n", ";").split(";"):
+        seg = seg.strip()
+        if not seg or "=" not in seg:
+            continue
+        k, v = seg.split("=", 1)
+        k, v = k.strip(), v.strip()
+        if not k:
+            continue
+        out.append({
+            "name": k,
+            "value": v,
+            "domain": ".xiaohongshu.com",
+            "path": "/",
+            "secure": True,
+            "httpOnly": k in ("web_session", "last_web_session", "a1", "acw_tc"),
+            "sameSite": "Lax",
+        })
+    return out
+
+
 @app.post("/api/import_cookie")
-def import_cookie():
-    """导入 Cookie 功能已下线：新架构下采集/登录同在外部 Chrome（同环境），
-    无跨环境搬运需求；界面 Cookie 区保持只读实时展示。"""
-    return {"ok": False, "error": "导入功能已下线（采集与登录同在 Chrome 内，直接读取无需导入）"}
+async def import_cookie(req: ImportCookieReq):
+    """导入 Cookie（新架构）：解析 → 注入独立 profile Chrome 校验登录态 → 有效则保存到本地。
+
+    - daily 调试模式：校验在独立 profile Chrome（APP 交付形态预演）中完成，不污染用户日常 Chrome；
+    - 生产模式：APP 自拉独立 profile，导入后直接注入该 Chrome，采集/发布即用该账号 —— 链路相同。
+    - 校验失败（无效/过期）：返回原因，前端引导去 Chrome 扫码登录。
+    """
+    from codex_xhs import browser_client
+
+    text = (req.cookie_text or "").strip()
+    if not text:
+        raise HTTPException(400, "请粘贴需要导入的 Cookie（name=value; 格式）")
+    cookies = _parse_cookie_text(text)
+    if not cookies:
+        raise HTTPException(400, "未能从文本中解析出 Cookie（请确认格式：web_session=xxx; a1=yyy）")
+
+    try:
+        r = await browser_client.verify_cookies(cookies)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"校验失败（独立浏览器未就绪）：{str(e)[:100]}")
+
+    if not r.get("logged_in"):
+        return {
+            "ok": False,
+            "valid": False,
+            "error": "Cookie 无效或已过期（登录态检测未通过）。请确认 Cookie 来自最近登录的小红书账号，或直接去 Chrome 扫码登录。",
+            "count": len(cookies),
+            "raw": f"url={r.get('url')} hasLoginUi={r.get('hasLoginUi')}",
+        }
+
+    # 有效：备份旧文件后保存（供 profile 模式启动自动载入）
+    dest = BASE / "data" / "cookies.json"
+    if dest.exists():
+        dest.replace(dest.with_suffix(".json.bak"))
+    dest.write_text(json.dumps({"cookies": cookies, "imported_at": datetime.datetime.now().isoformat(timespec="seconds")}, ensure_ascii=False, indent=2))
+    ws = next((c["value"] for c in cookies if c["name"] == "web_session"), "")
+    return {
+        "ok": True,
+        "valid": True,
+        "count": len(cookies),
+        "account": (ws[:8] + "…") if ws else "已登录",
+        "note": "Cookie 有效并已保存。独立浏览器（生产 APP 环境）将直接使用该账号；当前调试环境仍以日常 Chrome 登录态为准。",
+    }
 
 
 # ================= 发布 =================

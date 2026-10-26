@@ -65,7 +65,13 @@ async function collectClients(note: Note) {
       body: JSON.stringify({ feed_id: note.feed_id, xsec_token: note.xsec_token || '' }),
     })
     if (!resp.ok) {
-      toast('采集失败：' + ((await resp.text()) || resp.status).toString().slice(0, 100))
+      let msg = `HTTP ${resp.status}`
+      try {
+        const body = await resp.json()
+        if (body?.detail) msg = String(body.detail)
+      } catch { /* 非 JSON 错误体 */ }
+      toast('采集失败：' + msg.slice(0, 120))
+      if (msg.includes('登录态')) loginOpen.value = true
       return
     }
     const data = await resp.json()

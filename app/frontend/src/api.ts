@@ -65,6 +65,16 @@ export async function apiImportCookie(): Promise<{ ok: boolean; count?: number; 
   return j(await fetch(`${BASE}/api/import_cookie`, { method: 'POST' }))
 }
 
+export interface ImportCookieResult { ok: boolean; valid?: boolean; count?: number; account?: string; error?: string; note?: string }
+
+export async function apiImportCookieText(text: string): Promise<ImportCookieResult> {
+  return j(await fetch(`${BASE}/api/import_cookie`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cookie_text: text })
+  }))
+}
+
 export interface CookieItem { name: string; value: string; domain: string }
 
 export async function apiCookieInfo(): Promise<{ ok: boolean; count: number; saved_at: string; cookies: CookieItem[] }> {

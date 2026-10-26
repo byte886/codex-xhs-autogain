@@ -192,6 +192,39 @@ async def cookies() -> dict:
         await page.close()
 
 
+async def verify_cookies(cookies: list[dict]) -> dict:
+    """校验导入的 Cookie（生产路径预演）：注入独立 profile Chrome → 访问小红书首页判定登录态。
+
+    独立 profile（XHS_PROFILE_PORT=9223）是 APP 交付形态的专用浏览器，可随意注入 Cookie，
+    不污染用户日常 Chrome。校验通过即说明生产环境导入链路可用。"""
+    browser = await _connect_profile()
+    ctx = browser.contexts[0]
+    try:
+        try:
+            await ctx.add_cookies(cookies)
+        except Exception:  # CDP context 的 add_cookies 可能受限，退化为 Network.setCookies
+            cdp = await ctx.new_cdp_session(ctx.pages[0] if ctx.pages else await ctx.new_page())
+            await cdp.send("Network.setCookies", {"cookies": cookies})
+        page = await ctx.new_page()
+        try:
+            await page.goto(_XHS + "/explore", wait_until="domcontentloaded", timeout=40000)
+            await page.evaluate(_EXTRACT_SRC)
+            await asyncio.sleep(5)
+            return await page.evaluate(
+                "() => ({"
+                " logged_in: !!xhsIsLoggedIn(),"
+                " url: location.href,"
+                " hasLoginUi: /website-login|captcha/i.test(location.href),"
+                " noteCards: xhsExtractSearchNotes().length"
+                "})"
+            )
+        finally:
+            await page.close()
+    finally:
+        # 校验用 profile Chrome 保持运行（后续采集/登录可切换复用）；不关闭浏览器
+        pass
+
+
 async def search(keyword: str, limit: int = 30) -> dict:
     url = _XHS + "/search_result?keyword=" + _urlencode(keyword) + "&source=web_search_result_notes"
     page = await _load(url, 2500)
