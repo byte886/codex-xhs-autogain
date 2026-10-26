@@ -66,6 +66,60 @@ function xhsExtractUser(root = document) {
   };
 }
 
+function xhsExtractComments(root = document) {
+  // 评论区互动用户提取（P4 采集客户）：昵称 + UID + 评论文本
+  // 只在该页面的评论容器内提取（避免把侧边栏"我/首页/关注/作者徽标"等非评论链接当成评论者）；
+  // 昵称 a 有文本、头像 a 无文本 → 只取有文本的 a，且必须匹配到评论文本才计入。
+  const NAV = new Set(['首页', '点点', 'RED', '直播', '发布', '通知', '消息', '我', '关注', '作者', '更多', '关于我们', '返回顶部', '全部', '最热', '最新']);
+  const AREA = new Set(['广东', '北京', '上海', '天津', '重庆', '江苏', '浙江', '四川', '湖南', '湖北', '福建', '山东', '河南', '河北', '安徽', '江西', '陕西', '山西', '辽宁', '吉林', '黑龙江', '云南', '贵州', '广西', '海南', '甘肃', '青海', '宁夏', '新疆', '西藏', '内蒙古', '香港', '澳门', '台湾', '日本', '美国', '加拿大', '英国', '法国', '德国', '澳大利亚', '新加坡', '韩国', '泰国', '马来西亚']);
+  const TIME = /^(刚刚|昨天|前天|\d+天前|\d+-\d+|\d+小时前|\d+分钟前)$/;
+  const out = [];
+  const seen = new Set();
+  const container = root.querySelector('[class*="comment"]') || root;
+  const anchors = [...container.querySelectorAll('a[href*="/user/profile/"]')];
+  for (const a of anchors) {
+    const m = (a.getAttribute('href') || '').match(/\/user\/profile\/([0-9a-f]{24})/);
+    if (!m) continue;
+    const uid = m[1];
+    const nick = (a.innerText || '').trim();
+    if (!nick || NAV.has(nick)) continue;
+    // 向上找最近的评论条，取第一条像评论文本的内容（排除时间/IP/纯数字/导航词）
+    let cont = a.parentElement;
+    let comment = '';
+    for (let i = 0; i < 5 && cont; i++) {
+      const spans = [...cont.querySelectorAll('span, div, p')]
+        .map((e) => e.innerText.trim())
+        .filter((t) => t && t.length > 1 && t !== nick);
+      const cand = spans.find((t) => (
+        t.length >= 2
+        && !/^\d+$/.test(t)
+        && !TIME.test(t)
+        && !NAV.has(t)
+        && !AREA.has(t)
+      ));
+      if (cand) {
+        const first = cand.split('\n')[0].trim();
+        if (first === nick) continue;                    // 作者徽标条目（无独立评论文本）
+        if (/^\d+-\d+/.test(first) || TIME.test(first) || AREA.has(first)) continue; // 图片评论（无文字，首行即时间/IP）
+        comment = cand;
+        break;
+      }
+      cont = cont.parentElement;
+    }
+    if (!comment) continue; // 无评论文本 = 非评论者（导航/关注/作者徽标）
+    const key = uid + '|' + nick + '|' + comment.slice(0, 24);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      uid,
+      nickname: nick,
+      comment: comment.slice(0, 300),
+      profile: 'https://www.xiaohongshu.com/user/profile/' + uid,
+    });
+  }
+  return out;
+}
+
 // 登录态检测：页面特征（不依赖签名 API）
 function xhsIsLoggedIn(root = document) {
   // 未登录特征：出现登录弹层/登录按钮/被重定向到登录页
@@ -85,6 +139,7 @@ if (typeof window !== 'undefined') {
     searchNotes: xhsExtractSearchNotes,
     noteDetail: xhsExtractNoteDetail,
     user: xhsExtractUser,
+    comments: xhsExtractComments,
     isLoggedIn: xhsIsLoggedIn,
   };
 }

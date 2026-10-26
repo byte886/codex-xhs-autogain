@@ -54,10 +54,27 @@ async function cloneOne(note: Note) {
   await publishRef.value?.openFor(note)
 }
 
-// 采集客户：单条（图文+视频均可），P4 未实现前为演示
-function collectClients(note: Note) {
+// 采集客户（P4）：真实浏览器抓取笔记评论区互动用户，入库去重；图文+视频均可
+async function collectClients(note: Note) {
   const t = (note.title || '该笔记').slice(0, 12)
-  toast(`演示：采集「${t}…」的互动用户名单（P4 实现）`)
+  toast(`正在采集「${t}…」的互动用户…`)
+  try {
+    const resp = await fetch('/api/clients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ feed_id: note.feed_id, xsec_token: note.xsec_token || '' }),
+    })
+    if (!resp.ok) {
+      toast('采集失败：' + ((await resp.text()) || resp.status).toString().slice(0, 100))
+      return
+    }
+    const data = await resp.json()
+    toast(data.total > 0
+      ? `采集到 ${data.total} 位互动用户（新增 ${data.new}），已入库`
+      : '未采集到互动用户（可能无评论或需登录）')
+  } catch {
+    toast('采集失败：网络错误')
+  }
 }
 
 function backFromPublish() {

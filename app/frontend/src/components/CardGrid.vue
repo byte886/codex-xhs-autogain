@@ -82,6 +82,38 @@ function clearSelect() {
   toast('已清空选择')
 }
 
+// 下载图片包（P3）：后端把选中笔记的本地封面打包 zip，走 blob 下载
+async function downloadImages() {
+  const ids = Object.keys(appState.selected)
+  if (!ids.length) { toast('请先勾选笔记'); return }
+  let resp
+  try {
+    resp = await fetch('/api/download_images', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ feed_ids: ids }),
+    })
+  } catch {
+    toast('打包失败：网络错误')
+    return
+  }
+  if (!resp.ok) {
+    toast('打包失败：' + ((await resp.text()) || resp.status).toString().slice(0, 80))
+    return
+  }
+  const blob = await resp.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `xhs_images_${Date.now()}.zip`
+  document.body.appendChild(a)
+  a.click()
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url) }, 1000)
+  let missing = 0
+  try { missing = JSON.parse(resp.headers.get('X-Missing') || '[]').length } catch { /* 忽略 */ }
+  toast(missing > 0 ? `已打包 ${ids.length - missing} 张图片（${missing} 张缺失），文件已保存到浏览器下载目录` : `已打包 ${ids.length} 张图片，文件已保存到浏览器下载目录`)
+}
+
 function exportJSON() {
   const data = props.notes.map(n => ({
     feed_id: n.feed_id, title: n.title, nickname: n.nickname,
@@ -129,7 +161,7 @@ const selCount = computed(() => selectedCount())
     <div style="display:flex;gap:8px">
       <button class="b-btn" @click="selectAll">全选图文</button>
       <button class="b-btn" @click="clearSelect">清空选择</button>
-      <button class="b-btn" @click="toast('演示：下载选中图片 zip（P3 实现）')">下载图片包</button>
+      <button class="b-btn" @click="downloadImages">下载图片包</button>
       <button class="b-btn" @click="exportJSON">导出 JSON</button>
       <button class="b-btn" @click="exportCSV">导出 CSV</button>
     </div>

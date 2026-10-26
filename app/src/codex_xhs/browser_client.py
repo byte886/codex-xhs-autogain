@@ -228,6 +228,26 @@ async def user(uid: str) -> dict:
         await page.close()
 
 
+async def clients(note_id: str, xsec_token: str = "") -> dict:
+    """采集笔记评论区互动用户名单（P4）：打开原作品页 → 等待评论区渲染 → DOM 提取。"""
+    url = (
+        f"{_XHS}/search_result/{note_id}?xsec_token={_urlencode(xsec_token)}&xsec_source=pc_search"
+        if xsec_token else f"{_XHS}/explore/{note_id}"
+    )
+    page = await _load(url, 6000)
+    try:
+        # 评论区懒加载：滚动到评论区触发渲染 + 等待
+        for _ in range(3):
+            await page.evaluate("""() => {
+              const cs = document.querySelectorAll('[class*="comment"]');
+              if (cs.length) cs[cs.length - 1].scrollIntoView({ block: "center" });
+            }""")
+            await asyncio.sleep(1.5)
+        return await page.evaluate("() => xhsExtractComments()")
+    finally:
+        await page.close()
+
+
 async def open_front() -> dict:
     """打开小红书首页前台标签（引导扫码）；复用已有 explore 标签避免堆积。"""
     page = await _page()

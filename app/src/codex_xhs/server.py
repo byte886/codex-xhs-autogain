@@ -14,16 +14,18 @@ API:
   GET  /api/logs            → 发布记录
 """
 import datetime
+import io
 import json
 import random
 import sqlite3
 import time
 import urllib.request
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -83,6 +85,13 @@ def _init_tables(con):
         con.execute("ALTER TABLE publish_logs ADD COLUMN raw TEXT")
     except sqlite3.OperationalError:
         pass  # 列已存在
+    # P4 采集客户：互动用户名单（评论用户）
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS clients (
+            uid TEXT, feed_id TEXT, nickname TEXT, comment TEXT, profile TEXT, created_at TEXT,
+            PRIMARY KEY (uid, feed_id)
+        )
+    """)
     con.commit()
 
 
@@ -258,6 +267,37 @@ def notes(keyword: str = "", order: str = "score", tag: str = ""):
     return {"total": len(out), "notes": out}
 
 
+# ================= 下载图片包（P3） =================
+class DownloadImgsReq(BaseModel):
+    feed_ids: list[str]
+
+
+@app.post("/api/download_images")
+def download_images(req: DownloadImgsReq):
+    """打包选中笔记的本地封面图为 zip。
+
+    图片已在本地磁盘（docker/images），直接读文件打包，无网络请求、无风控风险。
+    缺失的 feed_id 在响应头 X-Missing 中返回（前端据此提示）。
+    """
+    if not req.feed_ids:
+        raise HTTPException(400, "没有选中的笔记")
+    missing: list[str] = []
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fid in req.feed_ids:
+            p = IMAGES_DIR / _img_name(fid)
+            if p.exists():
+                zf.write(p, arcname=p.name)
+            else:
+                missing.append(fid)
+    data = buf.getvalue()
+    fname = f"xhs_images_{int(time.time() * 1000)}.zip"
+    headers = {"Content-Disposition": f"attachment; filename={fname}"}
+    resp = StreamingResponse(iter([data]), media_type="application/zip", headers=headers)
+    resp.headers["X-Missing"] = json.dumps(missing)
+    return resp
+
+
 # ================= 单条详情 =================
 @app.get("/api/note/{feed_id}")
 async def note_detail(feed_id: str):
@@ -332,6 +372,37 @@ async def clone(req: CloneReq):
     n["images_local"] = local_images
     n["detail_ok"] = detail_ok
     return n
+
+
+# ================= 采集客户（P4） =================
+class ClientsReq(BaseModel):
+    feed_id: str
+    xsec_token: str = ""
+
+
+@app.post("/api/clients")
+async def collect_clients(req: ClientsReq):
+    """采集笔记评论区互动用户名单（P4）：真实浏览器打开原作品页提取评论用户，入库去重。
+
+    图文与视频笔记均支持（评论区都有互动用户）。每次采集访问一次真实页面，频次受浏览器全局锁约束。
+    """
+    try:
+        from codex_xhs import browser_client
+        users = await browser_client.clients(req.feed_id, req.xsec_token)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"浏览器采集失败：{e}")
+    con = _db()
+    ts = datetime.datetime.now().isoformat(timespec="seconds")
+    added = 0
+    for u in users:
+        cur = con.execute(
+            "INSERT OR IGNORE INTO clients (uid, feed_id, nickname, comment, profile, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (u.get("uid", ""), req.feed_id, u.get("nickname", ""), u.get("comment", ""), u.get("profile", ""), ts),
+        )
+        added += cur.rowcount
+    con.commit()
+    return {"total": len(users), "new": added, "users": users}
 
 
 # ================= Cookie（显示 / 一键从 Chrome 导入） =================
