@@ -139,6 +139,7 @@ const selCount = computed(() => selectedCount())
         />
         <div v-else class="ph" :style="phStyle(note)">{{ (note.title || '图')[0] }}</div>
         <span class="badge-note">{{ note.note_type === 'video' ? '视频' : '图文' }}</span>
+        <span v-if="note.score != null" class="score-badge" :class="{ hot: note.score >= 90 }">{{ note.score.toFixed(1) }}</span>
         <span class="check">✓</span>
       </div>
       <div class="meta">
@@ -147,6 +148,7 @@ const selCount = computed(() => selectedCount())
           <span class="author">
             <span class="avatar"></span>{{ note.nickname || '未知作者' }}
           </span>
+          <span class="tag" :class="{ hot: (note.score ?? 0) >= 90 }">{{ (note.score ?? 0) >= 90 ? '最值得模仿' : '高评分候选' }}</span>
           <span class="interact">
             <svg width="11" height="11" viewBox="0 0 24 24" :fill="(note.liked_count || 0) > 10000 ? '#FF2442' : '#888'">
               <path d="M12 21s-7.5-4.6-10-9.2C.4 8.6 2.8 5 6.4 5c2 0 3.6 1 4.8 2.6C12.4 6 14 5 16 5c3.6 0 6 3.6 4.4 6.8C18.9 16.4 12 21 12 21z" />

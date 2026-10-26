@@ -53,21 +53,14 @@ function cloneFromRank(n: Note) {
       </div>
     </div>
 
-    <!-- 筛选结果 -->
-    <div v-else-if="appState.stage === 'filter'">
-      <div class="info-bar">
-        <div class="info-item">
-          <span class="k">评分模型</span><span class="v small">互动密度 × 内容结构 × 爆款潜力</span>
-        </div>
-      </div>
-      <FilterRank :notes="appState.notes" @clone="cloneFromRank" @to-pick="setStage('pick')" />
-    </div>
-
-    <!-- 选择内容 -->
+    <!-- 选择内容（一页式：评分徽标卡片 + 筛选 + 勾选 + 批量） -->
     <div v-else-if="appState.stage === 'pick'">
       <div class="info-bar">
         <div class="info-item">
           <span class="k">已选</span><span class="v">{{ Object.keys(appState.selected).length }}</span>
+        </div>
+        <div class="info-item">
+          <span class="k">评分模型</span><span class="v small">互动密度 × 内容结构 × 爆款潜力（卡片右上角分数）</span>
         </div>
         <div class="info-item">
           <span class="k">操作提示</span><span class="v small">点击卡片勾选，右下角悬浮按钮批量操作</span>

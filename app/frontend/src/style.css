@@ -226,3 +226,18 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(255, 36, 66,
   .publish { padding: 16px; }
   .float-bar { bottom: 14px; right: 14px; }
 }
+
+/* 卡片评分徽标（一页式：筛选结果=评分徽标卡片） */
+.card .score-badge {
+  position: absolute; top: 8px; right: 8px; font-size: 15px; font-weight: 800;
+  background: rgba(0, 0, 0, .6); color: #FFD666; border-radius: 6px; padding: 2px 8px;
+  letter-spacing: .5px;
+}
+.card .score-badge.hot { background: var(--red); color: #fff; }
+
+/* 卡片排名标签（最值得模仿 / 高评分候选） */
+.card .row .tag {
+  font-size: 10px; color: #9A6A2F; background: #F7EFE2; border: 1px solid #E4D5BC;
+  border-radius: 4px; padding: 1px 5px; flex: none;
+}
+.card .row .tag.hot { color: var(--red); background: #FFF1F3; border-color: #F5C9D1; }

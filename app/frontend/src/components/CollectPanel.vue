@@ -56,7 +56,7 @@ async function doSearch() {
     appState.total = list.total
     appState.count = list.total
     appState.status = '展示中'
-    setStage('filter')
+    setStage('pick')
   } catch (e) {
     if (timer) { clearInterval(timer); timer = null }
     toast(`采集失败：${(e as Error).message}`)
