@@ -91,8 +91,14 @@ async function importCookie() {
     const r = await apiImportCookie()
     if (r.ok) {
       toast(`已从 Chrome 导入 Cookie（${r.count} 条），账号：${r.account || '已登录'}`)
+      // 导入即校验：Chrome cookie 不一定能在容器生效（设备指纹不匹配）→ 无效则自动转扫码
       const lg = await apiLoginStatus()
-      if (lg.logged_in) appState.login = { logged_in: true, nickname: lg.nickname || '' }
+      if (lg.logged_in) {
+        appState.login = { logged_in: true, nickname: lg.nickname || '' }
+      } else {
+        toast('导入的 Cookie 在容器内未生效（设备指纹不匹配），请扫码登录')
+        emit('open-login')
+      }
     } else {
       toast(`导入失败：${r.error || '未知错误'}`)
     }
