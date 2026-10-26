@@ -82,7 +82,7 @@ onUnmounted(stopTimers)
         </div>
       </div>
       <div class="qr-meta">
-        <span v-if="qrImage">二维码 {{ qrCountdown }}s 后刷新</span>
+        <span v-if="qrImage">二维码 {{ qrCountdown }}s 后刷新 · 扫码后自动验证（每 4s 检测）</span>
         <span v-else>&nbsp;</span>
         <button class="btn" @click="refreshQr" :disabled="loading">刷新二维码</button>
       </div>

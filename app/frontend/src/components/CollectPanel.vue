@@ -7,7 +7,6 @@ import type { CookieItem } from '../api'
 const emit = defineEmits<{ (e: 'collect-started'): void; (e: 'open-login'): void }>()
 
 const showCookie = ref(false)
-const cookieModalOpen = ref(false)
 const importing = ref(false)
 const cookieItems = ref<CookieItem[]>([])
 const cookieInfo = ref({ count: 0, saved_at: '' })
@@ -181,7 +180,6 @@ onMounted(async () => {
       <div class="cookie-box">
         <div class="cookie-actions">
           <button class="c-btn" @click="showCookie = !showCookie">{{ showCookie ? '隐藏 Cookie' : '显示 Cookie' }}</button>
-          <button class="c-btn" @click="cookieModalOpen = true">Cookie 在哪里复制？</button>
           <button class="c-btn primary" :disabled="importing" @click="importCookie">
             {{ importing ? '导入中…' : '导入 Cookie（从浏览器）' }}
           </button>
@@ -204,20 +202,5 @@ onMounted(async () => {
         </label>
       </div>
     </section>
-
-    <!-- Cookie 引导弹层 -->
-    <div v-if="cookieModalOpen" class="modal-mask" @click.self="cookieModalOpen = false">
-      <div class="modal">
-        <h3>Cookie 在哪里复制？</h3>
-        <div class="m-step"><span class="num">1</span><div>用电脑浏览器（Chrome/Edge）打开并登录 <code>www.xiaohongshu.com</code></div></div>
-        <div class="m-step"><span class="num">2</span><div>按 <code>F12</code> 打开开发者工具，切到 <code>Application</code>（应用）面板</div></div>
-        <div class="m-step"><span class="num">3</span><div>左侧找到 <code>Cookies → https://www.xiaohongshu.com</code>，右键任意 Cookie → 查看全部</div></div>
-        <div class="m-step"><span class="num">4</span><div>复制全部 Cookie 粘贴到「显示 Cookie」的编辑框，或直接点「导入 Cookie」从浏览器一键抓取（推荐，无需手抄）</div></div>
-        <div style="font-size:12px;color:var(--ink-2);background:#FFF7E6;border-radius:6px;padding:8px 10px;margin-bottom:10px">
-          提示：Cookie 是登录凭证，请勿外泄；工具会加密保存到本机。
-        </div>
-        <button class="close" @click="cookieModalOpen = false">知道了</button>
-      </div>
-    </div>
   </aside>
 </template>
