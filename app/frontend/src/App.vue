@@ -16,16 +16,15 @@ const menuNote = ref<Note | null>(null)
 const menuPos = ref({ x: 0, y: 0 })
 
 const loginOpen = ref(false)
+// 登录态检测改为「按需触发」：不再自动调用/定时轮询
+// （每次检测都会发起 Chrome CDP 连接 → 必弹「远程调试授权」窗）。
+// 触发点：用户主动打开登录引导；或搜索/采集失败提示后手动打开。
 function checkLogin() {
   apiLoginStatus().then((lg) => {
     appState.login = { logged_in: !!lg.logged_in, nickname: lg.nickname || '' }
-    // 容器登录态失效时自动弹出扫码窗口
     if (!lg.logged_in && !appState.collecting) loginOpen.value = true
   }).catch(() => { /* 后端未就绪静默 */ })
 }
-checkLogin()
-// 持续检测：采集途中 Cookie 失效也能自动弹（每 15s 重检一次）
-setInterval(checkLogin, 15000)
 
 function openMenu(payload: { note: Note; x: number; y: number }) {
   menuNote.value = payload.note

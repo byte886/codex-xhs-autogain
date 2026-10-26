@@ -82,32 +82,37 @@ def _init_tables(con):
 
 
 # ================= 登录 =================
+# 登录态缓存：Chrome CDP 连接会弹「远程调试授权」窗（每次连接必弹，官方无法关闭）。
+# 前端轮询 login_status 若每次都连 Chrome → 每几秒弹一次窗（用户痛点「关了又开」）。
+# 因此缓存检测结果 TTL=30s，轮询打缓存，不反复连 Chrome。
+_LOGIN_CACHE = {"t": 0.0, "data": None}
+_LOGIN_CACHE_TTL = 30.0
+
 @app.get("/api/login_status")
 def login_status():
-    """本地浏览器登录态检测：CDP 控制外部 Chrome（页面特征，不依赖签名接口）。"""
-    import re
-    import subprocess
+    """本地浏览器登录态检测：经常驻浏览器守护（复用 Chrome 连接，不反复弹授权窗）。结果缓存 30s。"""
+    import time
 
-    root = Path(__file__).resolve().parents[3]
+    now = time.monotonic()
+    if _LOGIN_CACHE["data"] is not None and now - _LOGIN_CACHE["t"] < _LOGIN_CACHE_TTL:
+        return _LOGIN_CACHE["data"]
+
     try:
-        r = subprocess.run(
-            ["node", "scripts/browser/actions.js", "login-check"],
-            cwd=root, capture_output=True, timeout=90,
-        )
-        out = (r.stdout or b"").decode(errors="replace")
-        m = re.search(r"LOGIN_STATE:(\{.*\})", out, re.S)
-        if not m:
-            return {"status": "unknown", "raw": (out or (r.stderr or b"").decode(errors="replace"))[:200]}
-        st = json.loads(m.group(1))
+        from codex_xhs import browser_client
+        st = browser_client.login_check()
         ok = st.get("logged_in")
-        return {
+        result = {
             "status": "logged_in" if ok else "not_logged_in",
             "logged_in": bool(ok),
             "nickname": "",
             "raw": f"url={st.get('url')} noteCards={st.get('noteCards')}",
         }
     except Exception as e:
-        return {"status": "unknown", "logged_in": False, "nickname": "", "raw": f"本地浏览器检测失败: {str(e)[:100]}"}
+        result = {"status": "unknown", "logged_in": False, "nickname": "", "raw": f"本地浏览器检测失败: {str(e)[:100]}"}
+
+    _LOGIN_CACHE["t"] = now
+    _LOGIN_CACHE["data"] = result
+    return result
 
 
 @app.get("/api/qrcode")
@@ -117,15 +122,13 @@ def qrcode():
     前端配合轮询 /api/login_status 直到登录成功。"""
     import subprocess
 
-    # 在 Chrome 中打开小红书首页（前台标签，用户可直接扫码）
+    # 在 Chrome 中打开小红书首页（前台标签，用户可直接扫码）——经常驻 Playwright 连接，不额外弹窗
     try:
-        subprocess.run(
-            ["node", str(BASE / "scripts" / "browser" / "open-xhs-front.js")],
-            capture_output=True, timeout=60,
-        )
+        from codex_xhs import browser_client
+        browser_client.open_front()
         return {
             "ok": True,
-            "guide": "请在打开的 Chrome 小红书首页中扫码登录；登录成功后本弹窗自动关闭。",
+            "guide": "请在打开的 Chrome 小红书首页中扫码登录；登录成功后点「我已扫码完成」检测。",
             "url": "https://www.xiaohongshu.com/explore",
             "expires_in": 300,
         }
@@ -332,28 +335,16 @@ _COOKIE_ORDER = ["web_session", "last_web_session", "a1", "webId", "gid", "id_to
 @app.get("/api/cookie_info")
 def cookie_info():
     """从外部 Chrome 实时读取小红书 cookie 摘要（界面「显示 Cookie」只读展示用）。
-    新架构下采集/登录都在同一个 Chrome 内完成，无跨环境搬运，故只读展示。"""
-    import re
-    import subprocess
-
-    root = Path(__file__).resolve().parents[3]
+    新架构下采集/登录都在同一个 Chrome 内完成，无跨环境搬运，故只读展示。经常驻守护复用连接。"""
     try:
-        r = subprocess.run(
-            ["node", "scripts/browser/actions.js", "cookies"],
-            cwd=root, capture_output=True, timeout=90,
-        )
-        out = (r.stdout or b"").decode(errors="replace")
-        m = re.search(r"COOKIES:(\{.*\})", out, re.S)
-        if not m:
-            return {"ok": False, "count": 0, "saved_at": "", "cookies": [],
-                    "error": f"Chrome 读取失败: {(out or (r.stderr or b'').decode(errors='replace'))[:100]}"}
-        d = json.loads(m.group(1))
+        from codex_xhs import browser_client
+        d = browser_client.cookies()
         names = d.get("names", [])
         items = []
         for i, nm in enumerate(names):
             items.append({"name": nm, "value": "", "domain": ".xiaohongshu.com", "ord": i})
         items.sort(key=lambda x: (_COOKIE_ORDER.index(x["name"]) if x["name"] in _COOKIE_ORDER else 99, x["name"]))
-        ws = next((c.get("value", "") for c in [d.get("web_session")] if c), "")
+        ws = d.get("web_session") or ""
         return {
             "ok": True,
             "count": d.get("count", 0),

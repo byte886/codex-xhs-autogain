@@ -167,9 +167,9 @@ async function connectDailyChrome(opt = {}) {
   const {
     ensureRunning = true,
     profile,
-    timeoutMs = 30000,
-    retries = 3,
-    retryGapMs = 1200,
+    timeoutMs = 12000,
+    retries = 2,
+    retryGapMs = 800,
     autoPress = true,
     activePortFile,
   } = opt;

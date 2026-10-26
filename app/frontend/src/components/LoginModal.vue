@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { apiLoginStatus, apiQrcode } from '../api'
 import { appState, toast } from '../store'
 
@@ -7,10 +7,10 @@ const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const loading = ref(false)
+const checking = ref(false)
 const guide = ref('')
 const guideOk = ref(false)
 const qrError = ref('')
-let pollTimer: ReturnType<typeof setInterval> | null = null
 
 async function openXhs() {
   loading.value = true
@@ -31,31 +31,29 @@ async function openXhs() {
   }
 }
 
-async function pollLogin() {
+// 手动确认检测：不自动轮询、不主动触发 Chrome CDP 连接（避免反复弹「远程调试授权」窗）。
+// 用户扫码完成后点「我已扫码」，才发起一次登录态检测。
+async function checkLogin() {
+  if (checking.value) return
+  checking.value = true
   try {
     const lg = await apiLoginStatus()
     if (lg.logged_in) {
       appState.login = { logged_in: true, nickname: lg.nickname || '' }
       appState.cookieRefreshTick += 1 // 通知 Cookie 区刷新（Chrome 内登录后 cookie 已更新）
       toast('登录成功，已恢复小红书登录态')
-      stopTimers()
       emit('close')
+    } else {
+      toast('仍未检测到登录态，请确认已扫码成功')
     }
   } catch (e) {
-    /* 后端暂不可达时静默 */
+    toast('检测失败：' + ((e as Error).message || '后端不可达'))
+  } finally {
+    checking.value = false
   }
 }
 
-function stopTimers() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
-}
-
-onMounted(() => {
-  openXhs()
-  pollTimer = setInterval(pollLogin, 4000)
-})
-
-onUnmounted(stopTimers)
+onMounted(openXhs)
 </script>
 
 <template>
@@ -64,13 +62,16 @@ onUnmounted(stopTimers)
       <h3>登录小红书</h3>
       <p class="qr-tip">
         小红书登录态已失效。已在你打开的 Chrome 中打开小红书首页，请直接扫码登录
-        （推荐使用当前演示账号），登录成功后本窗口自动关闭。
+        （推荐使用当前演示账号），扫码成功后点击下方按钮确认。
       </p>
       <div class="qr-stage">
         <div v-if="loading" class="qr-loading">正在打开 Chrome 小红书首页…</div>
         <div v-else-if="guideOk" class="qr-guide">
           <p class="guide-main">{{ guide }}</p>
-          <p class="guide-sub">登录后自动继续（每 4s 检测一次登录状态）</p>
+          <p class="guide-sub">扫码完成后点击「我已扫码完成」检测登录态</p>
+          <button class="btn check-btn" @click="checkLogin" :disabled="checking">
+            {{ checking ? '检测中…' : '我已扫码完成' }}
+          </button>
         </div>
         <div v-else class="qr-error">
           <p>{{ qrError }}</p>
@@ -78,7 +79,7 @@ onUnmounted(stopTimers)
         </div>
       </div>
       <div class="qr-meta">
-        <span v-if="guideOk">检测中…</span>
+        <span v-if="guideOk">手动检测模式（不自动连接）</span>
         <span v-else>&nbsp;</span>
         <button class="btn" @click="openXhs" :disabled="loading">重新打开</button>
       </div>
@@ -99,5 +100,6 @@ onUnmounted(stopTimers)
 .qr-guide .guide-sub { font-size: 12px; color: #999; margin-top: 8px; }
 .qr-loading, .qr-error { color: #999; font-size: 13px; }
 .qr-error .btn { margin-top: 10px; }
+.check-btn { margin-top: 14px; min-width: 120px; }
 .qr-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 12px; color: #888; }
 </style>

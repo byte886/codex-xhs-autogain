@@ -157,7 +157,7 @@ onMounted(async () => {
           <button class="c-btn icon" title="显示/隐藏 Cookie" @click="showCookie = !showCookie">
             {{ showCookie ? '▾' : '▸' }}
           </button>
-          <button class="c-btn" @click="emit('open-login')">扫码登录（容器）</button>
+          <button class="c-btn" @click="emit('open-login')">去 Chrome 扫码登录</button>
         </div>
         <div class="cookie-val" :class="{ show: showCookie }">
           <textarea

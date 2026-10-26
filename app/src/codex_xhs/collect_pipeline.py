@@ -41,23 +41,13 @@ def _parse_likes(s: str) -> int:
 
 
 def search_via_browser(keyword: str, limit: int = 20) -> list[dict]:
-    """本地浏览器搜索（替代容器 search_feeds）：
-    通过 CDP 控制外部 Chrome（真实设备/真实登录态），DOM 层提取卡片。
+    """本地浏览器搜索（Playwright 复用 Chrome 连接，DOM 层提取卡片）。
 
-    返回与 search_via_browser 相同结构的 notes 列表（feed_id/xsec_token/title/nickname/cover_url/liked_count）。
+    返回 notes 列表（feed_id/xsec_token/title/nickname/cover_url/liked_count）。
     """
-    import subprocess
+    from codex_xhs import browser_client
 
-    root = Path(__file__).resolve().parents[3]  # app/src/codex_xhs → 项目根
-    r = subprocess.run(
-        ["node", "scripts/browser/actions.js", "search", keyword],
-        cwd=root, capture_output=True, timeout=150,
-    )
-    out = (r.stdout or b"").decode(errors="replace")
-    m = re.search(r"SEARCH:(\{.*\})", out, re.S)
-    if not m:
-        raise RuntimeError(f"本地浏览器搜索无输出: {(r.stderr or b'').decode(errors='replace')[:120] or out[:120]}")
-    data = json.loads(m.group(1))
+    data = browser_client.search(keyword, limit)
     items = data.get("items", [])[:limit]
     notes = []
     for it in items:
@@ -87,20 +77,16 @@ def search_via_browser(keyword: str, limit: int = 20) -> list[dict]:
 
 
 def _run_browser(cmd: str, arg: str, tag: str, arg2: str = "") -> dict | None:
-    """调本地浏览器执行器（node scripts/browser/actions.js <cmd> <arg> [<arg2>]），
-    返回 stdout 中 `<TAG>:<json>` 的 dict；失败返回 None。"""
-    import subprocess
+    """经常驻 Playwright 连接调浏览器执行（note/user），复用连接不弹窗。失败返回 None。"""
+    from codex_xhs import browser_client
 
-    root = Path(__file__).resolve().parents[3]
     try:
-        argv = ["node", "scripts/browser/actions.js", cmd, arg] + ([arg2] if arg2 else [])
-        r = subprocess.run(argv, cwd=root, capture_output=True, timeout=90)
-        out = (r.stdout or b"").decode(errors="replace")
-        m = re.search(rf"{tag}:(\{{.*\}})", out, re.S)
-        if not m:
-            return None
-        return json.loads(m.group(1))
-    except Exception:
+        if cmd == "note":
+            return browser_client.note(arg, arg2) or None
+        if cmd == "user":
+            return browser_client.user(arg) or None
+        return None
+    except Exception:  # noqa: BLE001
         return None
 
 

@@ -32,9 +32,9 @@ function fmt(n: number | null | undefined): string {
   return v >= 10000 ? (v / 10000).toFixed(1) + '万' : String(v)
 }
 
-/** 封面图：本地代理优先（防盗链），其次外链，再占位 */
+/** 封面图：搜索封面优先（正方形缩略图），本地代理兜底；local_images 为详情图仅作最后兜底 */
 function coverOf(note: Note): string {
-  return coverProxy(note.local_images?.[0] || note.local_cover || note.cover_url)
+  return coverProxy(note.cover_url || note.local_cover || note.local_images?.[0] || '')
 }
 
 const broken = new Set<string>()
