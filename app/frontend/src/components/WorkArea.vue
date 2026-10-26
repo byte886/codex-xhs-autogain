@@ -46,11 +46,8 @@ function cloneFromRank(n: Note) {
           <span class="k">已完成</span><span class="v">{{ appState.notes.length }}</span>
           <span class="v small">{{ appState.elapsed }}s</span>
         </div>
-        <div class="filter-title">
-          <input v-model="filterText" placeholder="请选标题,作者或UID" style="width:100%" />
-        </div>
       </div>
-      <CardGrid :notes="appState.notes" :filter-text="filterText" @menu="emit('menu', $event)" />
+      <CardGrid :notes="appState.notes" @menu="emit('menu', $event)" />
       <div v-if="appState.searchNote" style="margin-top:12px;font-size:12px;color:var(--ink-2);background:#FFF7E6;border-radius:8px;padding:8px 12px">
         {{ appState.searchNote }}
       </div>
@@ -66,7 +63,7 @@ function cloneFromRank(n: Note) {
       <FilterRank :notes="appState.notes" @clone="cloneFromRank" @to-pick="setStage('pick')" />
     </div>
 
-    <!-- 选择作品 -->
+    <!-- 选择内容 -->
     <div v-else-if="appState.stage === 'pick'">
       <div class="info-bar">
         <div class="info-item">
@@ -76,7 +73,10 @@ function cloneFromRank(n: Note) {
           <span class="k">操作提示</span><span class="v small">点击卡片勾选，右下角悬浮按钮批量操作</span>
         </div>
       </div>
-      <CardGrid :notes="appState.notes" selectable @menu="emit('menu', $event)" />
+      <div class="filter-title" style="margin-bottom:10px">
+        <input v-model="filterText" placeholder="请选标题,作者或UID" style="width:100%" />
+      </div>
+      <CardGrid :notes="appState.notes" selectable :filter-text="filterText" @menu="emit('menu', $event)" />
     </div>
   </div>
 </template>
