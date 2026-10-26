@@ -10,6 +10,7 @@ const loading = ref(false)
 const qrImage = ref('')
 const qrError = ref('')
 const qrCountdown = ref(120)
+const qrExpired = ref(false)
 let timer: ReturnType<typeof setInterval> | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -21,6 +22,7 @@ async function refreshQr() {
     if (r.ok) {
       qrImage.value = r.image_url || (r.image ? `data:image/png;base64,${r.image}` : '')
       qrCountdown.value = r.expires_in || 90
+      qrExpired.value = false
     } else {
       qrError.value = r.error || '二维码获取失败'
       qrImage.value = ''
@@ -57,7 +59,10 @@ onMounted(() => {
   refreshQr()
   timer = setInterval(() => {
     qrCountdown.value -= 1
-    if (qrCountdown.value <= 0) refreshQr()
+    if (qrCountdown.value <= 0) {
+      qrExpired.value = true   // 过期提示 → 立即自动刷新拿新码
+      refreshQr()
+    }
   }, 1000)
   pollTimer = setInterval(pollLogin, 4000)
 })
@@ -75,14 +80,17 @@ onUnmounted(stopTimers)
       </p>
       <div class="qr-stage">
         <div v-if="loading" class="qr-loading">正在获取二维码…</div>
-        <img v-else-if="qrImage" :src="qrImage" alt="登录二维码" class="qr-img" />
+        <div v-else-if="qrImage" class="qr-wrap" :class="{ expired: qrExpired }">
+          <img :src="qrImage" alt="登录二维码" class="qr-img" />
+          <div v-if="qrExpired" class="qr-expired-mask">二维码已过期，自动刷新中…</div>
+        </div>
         <div v-else class="qr-error">
           <p>{{ qrError }}</p>
           <button class="btn" @click="refreshQr">重试获取二维码</button>
         </div>
       </div>
       <div class="qr-meta">
-        <span v-if="qrImage">二维码 {{ qrCountdown }}s 后刷新 · 扫码后自动验证（每 4s 检测）</span>
+        <span v-if="qrImage">二维码 {{ qrCountdown }}s 后过期 · 扫码后自动验证（每 4s 检测）</span>
         <span v-else>&nbsp;</span>
         <button class="btn" @click="refreshQr" :disabled="loading">刷新二维码</button>
       </div>
@@ -98,7 +106,13 @@ onUnmounted(stopTimers)
   min-height: 300px; display: flex; align-items: center; justify-content: center;
   background: #fff; border: 1px solid #eee; border-radius: 8px; overflow: hidden;
 }
-.qr-img { width: 300px; height: auto; }
+.qr-img { width: 300px; height: auto; display: block; }
+.qr-wrap { position: relative; }
+.qr-wrap.expired img { filter: blur(2px) grayscale(.6); opacity: .5; }
+.qr-expired-mask {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #E51F3A; font-size: 14px; font-weight: 600; background: rgba(255,255,255,.4);
+}
 .qr-loading, .qr-error { color: #999; font-size: 13px; }
 .qr-error .btn { margin-top: 10px; }
 .qr-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 12px; color: #888; }
