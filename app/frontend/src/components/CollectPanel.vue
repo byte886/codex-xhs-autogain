@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { appState, setStage, toast } from '../store'
-import { apiCookieInfo, apiImportCookie, apiLoginStatus, apiNotes, apiSearch } from '../api'
+import { apiCookieInfo, apiLoginStatus, apiNotes, apiSearch } from '../api'
 import type { CookieItem } from '../api'
 
 const emit = defineEmits<{ (e: 'collect-started'): void; (e: 'open-login'): void }>()
 
 const showCookie = ref(false)
-const importing = ref(false)
 const cookieItems = ref<CookieItem[]>([])
 const cookieInfo = ref({ count: 0, saved_at: '' })
 let timer: ReturnType<typeof setInterval> | null = null
@@ -84,30 +83,6 @@ async function doSearch() {
   }
 }
 
-async function importCookie() {
-  importing.value = true
-  try {
-    const r = await apiImportCookie()
-    if (r.ok) {
-      toast(`已从 Chrome 导入 Cookie（${r.count} 条），账号：${r.account || '已登录'}`)
-      // 导入即校验：Chrome cookie 不一定能在容器生效（设备指纹不匹配）→ 无效则自动转扫码
-      const lg = await apiLoginStatus()
-      if (lg.logged_in) {
-        appState.login = { logged_in: true, nickname: lg.nickname || '' }
-      } else {
-        toast('导入的 Cookie 在容器内未生效（设备指纹不匹配），请扫码登录')
-        emit('open-login')
-      }
-    } else {
-      toast(`导入失败：${r.error || '未知错误'}`)
-    }
-  } catch (e) {
-    toast(`导入失败：${(e as Error).message}`)
-  } finally {
-    importing.value = false
-    refreshCookieInfo()
-  }
-}
 
 // 扫码登录成功后容器 cookies.json 已更新 → 自动刷新 Cookie 显示（登录态/Cookie 三方联动）
 watch(() => appState.cookieRefreshTick, () => refreshCookieInfo())
@@ -181,9 +156,6 @@ onMounted(async () => {
         <div class="cookie-actions">
           <button class="c-btn icon" title="显示/隐藏 Cookie" @click="showCookie = !showCookie">
             {{ showCookie ? '▾' : '▸' }}
-          </button>
-          <button class="c-btn primary" :disabled="importing" @click="importCookie">
-            {{ importing ? '导入中…' : '导入 Cookie（从浏览器）' }}
           </button>
           <button class="c-btn" @click="emit('open-login')">扫码登录（容器）</button>
         </div>
