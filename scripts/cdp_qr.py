@@ -67,7 +67,7 @@ def newest_port():
         raise Exception("no DevToolsActivePort")
     return int(open(fp).readline().strip())
 
-def grab(port, check_only=False):
+def grab(port, check_only=False, click_login=False, fp_probe=False, create_qr=False):
     targets = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=5).read())
     pages = [t for t in targets if t["type"] == "page"]
     if not pages:
@@ -109,6 +109,42 @@ def grab(port, check_only=False):
             print(f"QR_NOT_FOUND state={qrinfo.get('state')} {json.dumps(qrinfo.get('big', []))[:160]}")
     except Exception as e:
         print("QR_EVAL_FAIL", str(e)[:120])
+    if create_qr:
+        js4 = r'''fetch('https://edith.xiaohongshu.com/api/sns/web/v1/login/qrcode/create', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json;charset=UTF-8'},
+          body: JSON.stringify({qr_type: 1}),
+          credentials: 'include'
+        }).then(r => r.json()).then(d => JSON.stringify(d)).catch(e => 'ERR:' + e.message)'''
+        r = cdp_call(s, 5, "Runtime.evaluate", {"expression": js4, "awaitPromise": True, "returnByValue": True})
+        print("CREATE_QR", json.dumps(r.get("result", {}).get("value", ""))[:800])
+    if fp_probe:
+        js3 = r'''(() => ({
+          ua: navigator.userAgent.slice(0, 120),
+          webdriver: navigator.webdriver,
+          platform: navigator.platform,
+          languages: navigator.languages.join(','),
+          cores: navigator.hardwareConcurrency,
+          memory: navigator.deviceMemory,
+          chromeObj: typeof window.chrome !== 'undefined',
+          plugins: navigator.plugins ? navigator.plugins.length : -1,
+          webgl: (() => { try { const c = document.createElement('canvas'); const g = c.getContext('webgl'); return g ? g.getParameter(g.getParameter(0x9245)) : 'no'; } catch(e) { return 'err'; } })(),
+          maxTouch: navigator.maxTouchPoints,
+          vendor: navigator.vendor
+        }))()'''
+        r = cdp_call(s, 4, "Runtime.evaluate", {"expression": js3, "returnByValue": True})
+        print("CONTAINER_FP", json.dumps(r.get("result", {}).get("value", {})))
+    if click_login:
+        js2 = r'''(() => {
+          const all = [...document.querySelectorAll('button, a, [class*=btn], [class*=login]')];
+          const target = all.find(el => (el.innerText || '').trim() === '登录' && el.offsetParent !== null)
+                      || all.find(el => (el.innerText || '').includes('登录') && el.offsetWidth > 30 && el.offsetParent !== null);
+          if (target) { target.click(); return { clicked: true, tag: target.tagName, cls: (target.className||'').toString().slice(0,60), text: target.innerText.slice(0,20) }; }
+          return { clicked: false, candidates: all.slice(0,20).map(el => (el.innerText||'').trim().slice(0,16)).filter(Boolean) };
+        })()'''
+        r = cdp_call(s, 3, "Runtime.evaluate", {"expression": js2, "returnByValue": True})
+        print("CLICK_LOGIN", json.dumps(r.get("result", {}).get("value", {}))[:200])
+        import time as _t; _t.sleep(3)
     if check_only:
         return
     # 2) 兜底：整页截图
@@ -119,11 +155,14 @@ def grab(port, check_only=False):
 
 import sys
 check_only = "--check" in sys.argv
+click_login = "--click-login" in sys.argv
+fp_probe = "--fp" in sys.argv
+create_qr = "--create-qr" in sys.argv
 last_err = None
 for attempt in range(3):
     try:
         port = newest_port()
-        grab(port, check_only=check_only)
+        grab(port, check_only=check_only, click_login=click_login, fp_probe=fp_probe, create_qr=create_qr)
         raise SystemExit(0)
     except Exception as e:
         last_err = e
