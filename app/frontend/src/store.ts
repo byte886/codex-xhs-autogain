@@ -34,6 +34,8 @@ export const appState = reactive({
   },
   // 登录
   login: { logged_in: false, nickname: '' },
+  // 登录态/Cookie 刷新信号（LoginModal 登录成功后 +1，CollectPanel 监听刷新 cookie 显示）
+  cookieRefreshTick: 0,
   // toast
   toastMsg: '',
 })

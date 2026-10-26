@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { appState, setStage, toast } from '../store'
 import { apiCookieInfo, apiImportCookie, apiLoginStatus, apiNotes, apiSearch } from '../api'
 import type { CookieItem } from '../api'
@@ -103,6 +103,9 @@ async function importCookie() {
     refreshCookieInfo()
   }
 }
+
+// 扫码登录成功后容器 cookies.json 已更新 → 自动刷新 Cookie 显示（登录态/Cookie 三方联动）
+watch(() => appState.cookieRefreshTick, () => refreshCookieInfo())
 
 onMounted(async () => {
   refreshCookieInfo()

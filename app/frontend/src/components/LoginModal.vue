@@ -38,6 +38,7 @@ async function pollLogin() {
     const lg = await apiLoginStatus()
     if (lg.logged_in) {
       appState.login = { logged_in: true, nickname: lg.nickname || '' }
+      appState.cookieRefreshTick += 1 // 通知 Cookie 区刷新（容器扫码后 cookies.json 已更新）
       toast('登录成功，已恢复容器登录态')
       stopTimers()
       emit('close')
