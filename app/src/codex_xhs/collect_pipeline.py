@@ -117,6 +117,16 @@ async def get_feed_detail(note: dict) -> dict:
     return note
 
 
+def _parse_fans(text: str) -> int:
+    """解析粉丝数文本：'1.2万'→12000、'3000'→3000、'12.3w'→123000。"""
+    f = (text or "").replace(",", "")
+    m = re.match(r"([\d.]+)(万|w|W)?", f)
+    if not m:
+        return 0
+    v = float(m.group(1))
+    return int(v * 10000 if m.group(2) else v)
+
+
 async def get_user_profile(note: dict, cache: dict) -> dict:
     """拿作者粉丝数（本地浏览器打开作者主页 DOM 提取；按 user_id 缓存）。"""
     uid = note.get("user_id")
@@ -128,11 +138,7 @@ async def get_user_profile(note: dict, cache: dict) -> dict:
     u = await _run_browser("user", uid, "USER")
     fans = 0
     if u:
-        f = u.get("fans") or ""
-        if f:
-            m = re.match(r"([\d.]+)(万|w|W)?", f.replace(",", ""))
-            if m:
-                fans = int(float(m.group(1)) * 10000 if m.group(2) else float(m.group(1)))
+        fans = _parse_fans(u.get("fans") or "")
         if not fans and u.get("nickname"):
             note["nickname"] = u["nickname"]
     cache[uid] = fans
@@ -181,11 +187,26 @@ def main():
     asyncio.run(_main_cli(args))
 
 
-async def _main_cli(args):
+def _upsert_note(con: sqlite3.Connection, n: dict, keyword: str, now: str) -> None:
+    """CLI 落库单条（评分字段来自 n['score_info']）。"""
+    si = n["score_info"]
+    con.execute(
+        "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            n.get("feed_id"), keyword, n.get("title", ""), n.get("type", ""),
+            n.get("user_id"), n.get("nickname", ""), n.get("avatar", ""),
+            n.get("cover_url", ""), n.get("xsec_token", ""), n.get("desc", ""), n.get("ip_location", ""),
+            int(n.get("liked_count") or 0), int(n.get("collected_count") or 0),
+            int(n.get("comment_count") or 0), int(n.get("shared_count") or 0),
+            int(n.get("fans_count") or 0), n.get("publish_time"),
+            si["score"], si["tag"], si["fan_ratio"], now,
+        ),
+    )
+    con.commit()
 
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    con = init_db(Path(args.out))
 
+async def _cli_search(args) -> list:
+    """CLI 阶段 1：多关键词搜索 + 去重。返回合并后的笔记列表。"""
     print(f"[1/4] 多关键词搜索: {args.keywords}")
     all_notes = []
     seen = set()
@@ -198,32 +219,19 @@ async def _main_cli(args):
                     n["keyword"] = kw
                     all_notes.append(n)
             print(f"      「{kw}」→ +{len(notes_kw)} 条，累计去重 {len(all_notes)} 条")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             print(f"      「{kw}」失败: {e}")
         time.sleep(REQUEST_INTERVAL[0] + random.random() * (REQUEST_INTERVAL[1] - REQUEST_INTERVAL[0]))
     notes = all_notes[: args.limit]
     print(f"      → 最终取 {len(notes)} 条（去重后）")
+    return notes
 
+
+async def _cli_enrich(con: sqlite3.Connection, notes: list, keyword: str) -> list:
+    """CLI 阶段 2：详情+粉丝补全 → 评分 → 落库。返回已落库的评分列表。"""
     import datetime
+
     now = datetime.datetime.now().isoformat(timespec="seconds")
-
-    def upsert(n):
-        si = n["score_info"]
-        con.execute(
-            "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                n.get("feed_id"), n.get("keyword", args.keywords[0]), n.get("title", ""), n.get("type", ""),
-                n.get("user_id"), n.get("nickname", ""), n.get("avatar", ""),
-                n.get("cover_url", ""), n.get("xsec_token", ""), n.get("desc", ""), n.get("ip_location", ""),
-                int(n.get("liked_count") or 0), int(n.get("collected_count") or 0),
-                int(n.get("comment_count") or 0), int(n.get("shared_count") or 0),
-                int(n.get("fans_count") or 0), n.get("publish_time"),
-                si["score"], si["tag"], si["fan_ratio"], now,
-            ),
-        )
-        con.commit()
-
-    # 断点续跑：已落库的 feed_id 跳过
     existing = {r[0] for r in con.execute("SELECT feed_id FROM notes").fetchall()}
     todo = [n for n in notes if n["feed_id"] not in existing]
     print(f"[2/4] 详情+粉丝补全（待处理 {len(todo)} 条，已跳过 {len(notes)-len(todo)} 条）...")
@@ -233,16 +241,25 @@ async def _main_cli(args):
             n = await get_feed_detail(n)
             n = await get_user_profile(n, cache)
             n["score_info"] = rank_notes([n])[0]["score_info"]
-            upsert(n)
+            _upsert_note(con, n, keyword, now)
             if (i + 1) % 10 == 0 or (i + 1) == len(todo):
                 print(f"      → {i+1}/{len(todo)}（库内累计 {con.execute('SELECT COUNT(*) FROM notes').fetchone()[0]} 条）")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             print(f"      → 第 {i+1} 条失败（{n.get('title','')[:16]}）: {e}，继续下一批")
             time.sleep(5)
     con.commit()
-
     ranked = rank_notes(todo)
     print(f"      → 已完成落库，库内共 {con.execute('SELECT COUNT(*) FROM notes').fetchone()[0]} 条")
+    return ranked
+
+
+async def _main_cli(args):
+    """CLI 入口：搜索 → 补全评分落库 → 打印 TOP10。"""
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    con = init_db(Path(args.out))
+
+    notes = await _cli_search(args)
+    ranked = await _cli_enrich(con, notes, args.keywords[0])
 
     print("\n=== TOP 10 评分结果（本次新增） ===")
     for n in ranked[:10]:

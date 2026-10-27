@@ -235,6 +235,51 @@ import uuid
 _COLLECT_TASKS: dict = {}
 
 
+def _rank_and_insert(con, n: dict, keyword: str, now: str) -> bool:
+    """单条笔记评分 + 落库。返回是否成功。"""
+    try:
+        n["keyword"] = keyword
+        n["local_cover"] = ""
+        try:
+            si = rank_notes([n])[0]["score_info"]
+        except Exception:  # noqa: BLE001
+            si = {"score": 0.0, "tag": "评分失败", "fan_ratio": 0.0}
+        con.execute(
+            "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                n.get("feed_id"), keyword, n.get("title", ""), n.get("type", ""),
+                n.get("user_id"), n.get("nickname", ""), n.get("avatar", ""),
+                n.get("cover_url", ""), n.get("xsec_token", ""), n.get("desc", ""),
+                n.get("ip_location", ""),
+                int(n.get("liked_count") or 0), int(n.get("collected_count") or 0),
+                int(n.get("comment_count") or 0), int(n.get("shared_count") or 0),
+                int(n.get("fans_count") or 0), n.get("publish_time"),
+                si["score"], si["tag"], si["fan_ratio"], now,
+            ),
+        )
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _download_cover(n: dict) -> None:
+    """下载单条封面到本地（已有则跳过；带平台 Referer/UA）。"""
+    if not n.get("cover_url"):
+        return
+    cf = IMAGES_DIR / _img_name(n["feed_id"])
+    if cf.exists():
+        return
+    try:
+        reqh = urllib.request.Request(
+            n["cover_url"],
+            headers={"Referer": "https://www.xiaohongshu.com/", "User-Agent": "Mozilla/5.0"},
+        )
+        with urllib.request.urlopen(reqh, timeout=10) as resp:
+            cf.write_bytes(resp.read())
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _persist_notes(keyword: str, notes: list) -> tuple:
     """搜索/采集结果落库：新结果替换旧批次（用完即失效）+ 本地评分 + 封面下载。
     返回 (added, total, top)。"""
@@ -244,49 +289,12 @@ def _persist_notes(keyword: str, notes: list) -> tuple:
     now = datetime.datetime.now().isoformat(timespec="seconds")
     saved = 0
     for n in notes:
-        try:
-            n["keyword"] = keyword
-            n["local_cover"] = ""
-            try:
-                si = rank_notes([n])[0]["score_info"]
-            except Exception:
-                si = {"score": 0.0, "tag": "评分失败", "fan_ratio": 0.0}
-            con.execute(
-                "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    n.get("feed_id"), keyword, n.get("title", ""), n.get("type", ""),
-                    n.get("user_id"), n.get("nickname", ""), n.get("avatar", ""),
-                    n.get("cover_url", ""), n.get("xsec_token", ""), n.get("desc", ""),
-                    n.get("ip_location", ""),
-                    int(n.get("liked_count") or 0), int(n.get("collected_count") or 0),
-                    int(n.get("comment_count") or 0), int(n.get("shared_count") or 0),
-                    int(n.get("fans_count") or 0), n.get("publish_time"),
-                    si["score"], si["tag"], si["fan_ratio"], now,
-                ),
-            )
+        if _rank_and_insert(con, n, keyword, now):
             saved += 1
-        except Exception:
-            continue
     con.commit()
 
-    def _dl_cover(n):
-        if not n.get("cover_url"):
-            return
-        cf = IMAGES_DIR / _img_name(n["feed_id"])
-        if cf.exists():
-            return
-        try:
-            reqh = urllib.request.Request(
-                n["cover_url"],
-                headers={"Referer": "https://www.xiaohongshu.com/", "User-Agent": "Mozilla/5.0"},
-            )
-            with urllib.request.urlopen(reqh, timeout=10) as resp:
-                cf.write_bytes(resp.read())
-        except Exception:
-            pass
-
     with ThreadPoolExecutor(max_workers=6) as ex:
-        list(ex.map(_dl_cover, notes))
+        list(ex.map(_download_cover, notes))
 
     top = con.execute(
         "SELECT feed_id, title, nickname, liked_count, fans_count, score, tag, cover_url "
@@ -451,6 +459,47 @@ class CloneReq(BaseModel):
 
 
 @app.post("/api/clone")
+async def _collect_images(n: dict, feed_id: str) -> list:
+    """克隆用：取详情图片列表（本地浏览器提取，失败回退封面）。返回图片 URL 列表。"""
+    images = []
+    try:
+        dn = dict(n)
+        dn = await get_feed_detail(dn)
+        imgs = dn.get("detail_imgs") or []
+        if imgs:
+            images = imgs
+            if dn.get("desc"):
+                n["desc"] = dn.get("desc")
+    except Exception:  # noqa: BLE001
+        pass
+    if not images and n.get("cover_url"):
+        images = [n["cover_url"]]
+    return images
+
+
+def _download_image(feed_id: str, idx: int, url: str) -> str:
+    """克隆用：下载单张图到本地。返回可访问路径（失败返回空串）。"""
+    fname = _img_name(feed_id, suffix=f"p{idx}")
+    dest = IMAGES_DIR / fname
+    try:
+        if not dest.exists():
+            reqh = urllib.request.Request(
+                url,
+                headers={"Referer": "https://www.xiaohongshu.com/", "User-Agent": "Mozilla/5.0"},
+            )
+            with urllib.request.urlopen(reqh, timeout=20) as resp:
+                dest.write_bytes(resp.read())
+        return f"/app/images/{fname}"
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _download_images(feed_id: str, images: list) -> list:
+    """克隆用：并行下载图片（≤9 张）。返回本地路径列表。"""
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        return list(ex.map(lambda p: _download_image(feed_id, p[0], p[1]), enumerate(images[:9])))
+
+
 async def clone(req: CloneReq):
     """克隆：取详情 → 下载图片到 images → 返回可编辑载荷。"""
     await _require_login()
@@ -460,38 +509,8 @@ async def clone(req: CloneReq):
         raise HTTPException(404, "笔记不存在")
     n = dict(r)
 
-    # 图片列表（优先本地浏览器详情提取，其次封面）
-    images = []
-    detail_ok = False
-    try:
-        dn = dict(n)
-        dn = await get_feed_detail(dn)
-        imgs = dn.get("detail_imgs") or []
-        if imgs:
-            detail_ok = True
-            images = imgs
-            if dn.get("desc"):
-                n["desc"] = dn.get("desc")
-    except Exception:
-        pass
-    if not images and n.get("cover_url"):
-        images = [n["cover_url"]]
-
-    local_images = []
-    def _dl_one(idx_url):
-        idx, u = idx_url
-        fname = _img_name(req.feed_id, suffix=f"p{idx}")
-        dest = IMAGES_DIR / fname
-        try:
-            if not dest.exists():
-                reqh = urllib.request.Request(u, headers={"Referer": "https://www.xiaohongshu.com/", "User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(reqh, timeout=20) as resp:
-                    dest.write_bytes(resp.read())
-            return f"/app/images/{fname}"
-        except Exception:
-            return ""
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        local_images = list(ex.map(_dl_one, enumerate(images[:9])))
+    images = await _collect_images(n, req.feed_id)
+    local_images = _download_images(req.feed_id, images)
 
     n["images_local"] = local_images
     n["detail_ok"] = detail_ok
@@ -542,6 +561,16 @@ async def collect_clients(req: ClientsReq):
 _COOKIE_ORDER = ["web_session", "last_web_session", "a1", "webId", "gid", "id_token", "acw_tc", "websectiga"]
 
 
+def _cookie_items(cookies: list) -> tuple[list, str]:
+    """把本地 cookie 列表整理成展示项（按 _COOKIE_ORDER 排序）+ 提取 web_session 摘要。"""
+    items = []
+    for i, nm in enumerate(c.get("name", "") for c in cookies):
+        items.append({"name": nm, "value": "", "domain": ".xiaohongshu.com", "ord": i})
+    items.sort(key=lambda x: (_COOKIE_ORDER.index(x["name"]) if x["name"] in _COOKIE_ORDER else 99, x["name"]))
+    ws = next((c.get("value", "") for c in cookies if c.get("name") == "web_session"), "") or ""
+    return items, ws
+
+
 @app.get("/api/cookie_info")
 async def cookie_info():
     """只读展示 Cookie 摘要：读本地 data/cookies.json，不连浏览器、不打开页面。
@@ -554,12 +583,7 @@ async def cookie_info():
         if p.exists():
             data = json.loads(p.read_text(encoding="utf8"))
         cookies = data.get("cookies", []) or []
-        names = [c.get("name", "") for c in cookies]
-        items = []
-        for i, nm in enumerate(names):
-            items.append({"name": nm, "value": "", "domain": ".xiaohongshu.com", "ord": i})
-        items.sort(key=lambda x: (_COOKIE_ORDER.index(x["name"]) if x["name"] in _COOKIE_ORDER else 99, x["name"]))
-        ws = next((c.get("value", "") for c in cookies if c.get("name") == "web_session"), "") or ""
+        items, ws = _cookie_items(cookies)
         return {
             "ok": True,
             "count": len(cookies),
@@ -610,6 +634,27 @@ def _save_cookies_file(cookies: list[dict]):
     ))
 
 
+def _read_chrome_cookies() -> tuple[list | None, dict | None]:
+    """读 .codex-xhs-profile 的 Chrome Cookie 库（钥匙串解密）。返回 (cookies, 错误响应)；成功时错误为 None。"""
+    profile_dir = os.environ.get("XHS_PROFILE_DIR") or os.path.join(
+        os.path.expanduser("~"), ".codex-xhs-profile"
+    )
+    os.environ["XHS_CHROME_USER_DATA_DIR"] = profile_dir
+    from codex_xhs import cookie_reader
+
+    try:
+        return cookie_reader.read_chrome_cookies(), None
+    except cookie_reader.ChromeCookieReadError as e:
+        status = cookie_reader.keychain_status()
+        if status == "pending":
+            return None, {
+                "ok": False,
+                "need_auth": True,
+                "error": "首次自动读取需要授权：请在弹出的系统钥匙串窗口中输入密码并点「始终允许」，然后重试。",
+            }
+        return None, {"ok": False, "need_auth": False, "error": f"读取 Chrome 登录态失败：{str(e)[:120]}"}
+
+
 @app.post("/api/refresh_cookie_from_chrome")
 async def refresh_cookie_from_chrome():
     """方案 A 自动续期：直接读日常 Chrome 的 Cookie 库（钥匙串解密）→ 校验 → 落盘。
@@ -622,21 +667,9 @@ async def refresh_cookie_from_chrome():
 
     # 统一独立 profile 浏览器架构：登录态来源 = 采集浏览器自身（.codex-xhs-profile）。
     # 读取其 Chrome Cookie 库（钥匙串解密，跨平台无 CDP 依赖），扫码登录落盘即闭环。
-    profile_dir = os.environ.get("XHS_PROFILE_DIR") or os.path.join(
-        os.path.expanduser("~"), ".codex-xhs-profile"
-    )
-    os.environ["XHS_CHROME_USER_DATA_DIR"] = profile_dir
-    try:
-        chrome_cookies = cookie_reader.read_chrome_cookies()
-    except cookie_reader.ChromeCookieReadError as e:
-        status = cookie_reader.keychain_status()
-        if status == "pending":
-            return {
-                "ok": False,
-                "need_auth": True,
-                "error": "首次自动读取需要授权：请在弹出的系统钥匙串窗口中输入密码并点「始终允许」，然后重试。",
-            }
-        return {"ok": False, "need_auth": False, "error": f"读取 Chrome 登录态失败：{str(e)[:120]}"}
+    chrome_cookies, err = _read_chrome_cookies()
+    if chrome_cookies is None:
+        return err
 
     if not chrome_cookies:
         return {"ok": False, "need_auth": False,
@@ -646,17 +679,7 @@ async def refresh_cookie_from_chrome():
     if not cookies:
         return {"ok": False, "need_auth": False, "error": "从 Chrome 解析 Cookie 失败"}
 
-    try:
-        r = await browser_client.verify_cookies(cookies)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"校验失败（独立浏览器未就绪）：{str(e)[:100]}")
-    finally:
-        try:
-            # 用后即停仅限后台窗口模式；演示（XHS_PROFILE_WINDOW=normal）保留窗口供用户查看
-            if os.environ.get("XHS_PROFILE_WINDOW") != "normal":
-                await browser_client.stop_profile()
-        except Exception:  # noqa: BLE001
-            pass
+    r = await _verify_cookies_or_raise(cookies)
 
     if not r.get("logged_in"):
         return {
@@ -680,6 +703,23 @@ async def refresh_cookie_from_chrome():
 
 
 @app.post("/api/import_cookie")
+async def _verify_cookies_or_raise(cookies: list) -> dict:
+    """校验导入/读取的 Cookie（独立 profile Chrome），失败抛 502；后台窗口模式用后即停。"""
+    from codex_xhs import browser_client
+
+    try:
+        return await browser_client.verify_cookies(cookies)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"校验失败（独立浏览器未就绪）：{str(e)[:100]}")
+    finally:
+        try:
+            # 用后即停仅限后台窗口模式；演示（XHS_PROFILE_WINDOW=normal）保留窗口供用户查看
+            if os.environ.get("XHS_PROFILE_WINDOW") != "normal":
+                await browser_client.stop_profile()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 async def import_cookie(req: ImportCookieReq):
     """导入 Cookie（新架构）：解析 → 注入独立 profile Chrome 校验登录态 → 有效则保存到本地。
 
@@ -687,8 +727,6 @@ async def import_cookie(req: ImportCookieReq):
     - 生产模式：APP 自拉独立 profile，导入后直接注入该 Chrome，采集/发布即用该账号 —— 链路相同。
     - 校验失败（无效/过期）：返回原因，前端引导去 Chrome 扫码登录。
     """
-    from codex_xhs import browser_client
-
     text = (req.cookie_text or "").strip()
     if not text:
         raise HTTPException(400, "请粘贴需要导入的 Cookie（name=value; 格式）")
@@ -696,17 +734,7 @@ async def import_cookie(req: ImportCookieReq):
     if not cookies:
         raise HTTPException(400, "未能从文本中解析出 Cookie（请确认格式：web_session=xxx; a1=yyy）")
 
-    try:
-        r = await browser_client.verify_cookies(cookies)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"校验失败（独立浏览器未就绪）：{str(e)[:100]}")
-    finally:
-        try:
-            if os.environ.get("XHS_PROFILE_WINDOW") != "normal":
-                await browser_client.stop_profile()
-        except Exception:  # noqa: BLE001
-            pass
-
+    r = await _verify_cookies_or_raise(cookies)
     if not r.get("logged_in"):
         return {
             "ok": False,
@@ -837,14 +865,8 @@ def _duplicate_published(con, title, content) -> bool:
     return (row["c"] if row else 0) > 0
 
 
-@app.post("/api/publish")
-def publish(req: PublishReq):
-    # ① 拟人思考：发布前随机停顿 2-5s（像真人斟酌后再点）
-    human_delay(2.0, 5.0)
-
-    con = _db()
-
-    # ② 风控熔断：近 24h 有风控类失败 → 硬停，人工解锁
+def _publish_guard_time(con) -> dict | None:
+    """护栏（时间类）：风控熔断 / 活跃时段 / 冷却间隔。任一不满足返回拒绝响应。"""
     blocked = _risk_blocked_until(con)
     if blocked:
         return {
@@ -853,7 +875,6 @@ def publish(req: PublishReq):
             "raw": f"风控熔断中：近 24h 发布被平台拦截（验证码/频繁/拦截）。发布功能已自动停用至 {blocked}，请人工确认账号状态后再恢复。切勿自动重试。",
         }
 
-    # ③ 时段限制：仅真人活跃时段（10:00-21:30）可发布
     hour = _now().hour + _now().minute / 60.0
     if not (ACTIVE_HOUR_START <= hour <= ACTIVE_HOUR_END):
         return {
@@ -862,7 +883,6 @@ def publish(req: PublishReq):
             "raw": f"当前 {_now().hour:02d}:{_now().minute:02d} 非真人活跃时段（仅 {ACTIVE_HOUR_START}:00-21:30 可发布）。真人不会半夜发笔记，请在白天发布。",
         }
 
-    # ④ 冷却检查：距上次发布不足 N±抖动 分钟 → 拒绝
     ago = _last_publish_ago_minutes(con)
     limit = PUBLISH_COOLDOWN_MIN + random.uniform(0, PUBLISH_COOLDOWN_JITTER)
     if ago is not None and ago < limit:
@@ -872,8 +892,11 @@ def publish(req: PublishReq):
             "cooldown": True,
             "raw": f"发布过于频繁：距上次发布仅 {ago:.0f} 分钟。平台对短时间连发很敏感（间隔 3-4 小时），请等待 {wait:.0f} 分钟后重试。",
         }
+    return None
 
-    # ⑤ 每日上限：成功发布数已达上限 → 拒绝
+
+def _publish_guard_quota(con, req: PublishReq) -> dict | None:
+    """护栏（配额类）：每日上限 / 每周发布日 / 文案防重。任一不满足返回拒绝响应。"""
     if _publish_count_today(con) >= PUBLISH_DAILY_MAX:
         return {
             "ok": False,
@@ -881,7 +904,6 @@ def publish(req: PublishReq):
             "raw": f"今日发布已达上限（{PUBLISH_DAILY_MAX} 条）。真人日更 1-3 条，明天再发。",
         }
 
-    # ⑥ 每周发布日 ≤6：模拟每周至少休息一天
     if _publish_week_days(con) >= WEEKLY_MAX_DAYS:
         return {
             "ok": False,
@@ -889,13 +911,29 @@ def publish(req: PublishReq):
             "raw": "本周已连续发布 6 天。真人每周会有休息日，请明天再发。",
         }
 
-    # ⑦ 文案防重：同一标题+正文 24h 内已成功发布 → 拒绝
     if _duplicate_published(con, req.title, req.content or req.desc):
         return {
             "ok": False,
             "cooldown": True,
             "raw": f"该文案 {DUPLICATE_WINDOW_HOURS} 小时内已发布过。平台对重复文案判定极严，请改写标题或正文。",
         }
+    return None
+
+
+def _publish_guard(con, req: PublishReq) -> dict | None:
+    """发布护栏链：时间类 + 配额类检查。任一不满足返回拒绝响应，否则 None。"""
+    return _publish_guard_time(con) or _publish_guard_quota(con, req)
+
+
+@app.post("/api/publish")
+def publish(req: PublishReq):
+    # ① 拟人思考：发布前随机停顿 2-5s（像真人斟酌后再点）
+    human_delay(2.0, 5.0)
+
+    con = _db()
+    guard = _publish_guard(con, req)
+    if guard:
+        return guard
 
     # ⑧ 执行发布：Docker 已退役（2026-10-26 迁移：采集/登录迁到外部 Chrome）。
     #    发布永远用户手动（产品红线）：后端只做校验与载荷准备，实际发布由用户在

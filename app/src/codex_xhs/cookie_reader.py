@@ -134,54 +134,60 @@ def keychain_status() -> str:
         return "unavailable"
 
 
-def _get_decryption_key() -> bytes:
-    """获取解密密钥（macOS 钥匙串 / Windows DPAPI）。返回 base64 字符串 bytes。"""
-    if platform.system() == "Darwin":
-        r = subprocess.run(
-            ["security", "find-generic-password", "-w",
-             "-a", KEYCHAIN_ACCOUNT, "-s", KEYCHAIN_SERVICE],
-            capture_output=True, text=True, timeout=30,
+def _key_macos() -> bytes:
+    """macOS：钥匙串读取「Chrome Safe Storage」密钥。PBKDF2 的 password 直接用 base64 字符串本身。"""
+    r = subprocess.run(
+        ["security", "find-generic-password", "-w",
+         "-a", KEYCHAIN_ACCOUNT, "-s", KEYCHAIN_SERVICE],
+        capture_output=True, text=True, timeout=30,
+    )
+    if r.returncode != 0:
+        raise ChromeCookieReadError(
+            f"钥匙串读取失败 rc={r.returncode}（可能未授权："
+            f"请在弹出窗口中点「始终允许」）: {r.stderr.strip()[:120]}"
         )
-        if r.returncode != 0:
-            raise ChromeCookieReadError(
-                f"钥匙串读取失败 rc={r.returncode}（可能未授权："
-                f"请在弹出窗口中点「始终允许」）: {r.stderr.strip()[:120]}"
-            )
-        secret = r.stdout.strip()
-        if not secret:
-            raise ChromeCookieReadError("钥匙串返回空密钥")
-        # Chrome macOS：PBKDF2 的 password 直接用 base64 字符串本身，不解码！
-        return secret.encode("utf-8")
+    secret = r.stdout.strip()
+    if not secret:
+        raise ChromeCookieReadError("钥匙串返回空密钥")
+    return secret.encode("utf-8")
 
+
+def _key_windows() -> bytes:
+    """Windows：DPAPI 解密 Local State 的 encrypted_key（"DPAPI" 前缀 + 密文）。结构就位，待实测。"""
+    try:
+        import ctypes
+    except ImportError:  # pragma: no cover
+        raise ChromeCookieReadError("Windows 分支需要 ctypes")  # noqa: B904
+    path = _chrome_local_state_path()
+    if not os.path.exists(path):
+        raise ChromeCookieReadError("Chrome Local State 不存在，请先使用 Chrome 登录")
+    import json
+    with open(path, encoding="utf-8") as f:
+        enc = base64.b64decode(json.load(f)["os_crypt"]["encrypted_key"])
+    if not enc.startswith(b"DPAPI"):
+        raise ChromeCookieReadError("encrypted_key 缺少 DPAPI 前缀（Chrome 新版本格式未适配）")
+
+    class DATA_BLOB(ctypes.Structure):  # noqa: N801
+        _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.c_void_p)]
+
+    blob_in, blob_out = DATA_BLOB(), DATA_BLOB()
+    buf = ctypes.create_string_buffer(enc[5:])
+    blob_in.cbData, blob_in.pbData = len(enc) - 5, ctypes.addressof(buf)
+    if not ctypes.windll.crypt32.CryptUnprotectData(
+        ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
+    ):
+        raise ChromeCookieReadError("DPAPI 解密失败（当前 Windows 用户与 Chrome 用户不一致？）")
+    key = ctypes.string_at(blob_out.pbData, blob_out.cbData)
+    ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+    return key  # Windows: AES key 为原始 32 字节
+
+
+def _get_decryption_key() -> bytes:
+    """获取解密密钥（macOS 钥匙串 / Windows DPAPI）。按平台路由。"""
+    if platform.system() == "Darwin":
+        return _key_macos()
     if platform.system() == "Windows":
-        # DPAPI 解密 Local State 的 encrypted_key（"DPAPI" 前缀 + 密文）
-        try:
-            import ctypes
-        except ImportError:  # pragma: no cover
-            raise ChromeCookieReadError("Windows 分支需要 ctypes")  # noqa: B904
-        path = _chrome_local_state_path()
-        if not os.path.exists(path):
-            raise ChromeCookieReadError("Chrome Local State 不存在，请先使用 Chrome 登录")
-        import json
-        with open(path, encoding="utf-8") as f:
-            enc = base64.b64decode(json.load(f)["os_crypt"]["encrypted_key"])
-        if not enc.startswith(b"DPAPI"):
-            raise ChromeCookieReadError("encrypted_key 缺少 DPAPI 前缀（Chrome 新版本格式未适配）")
-
-        class DATA_BLOB(ctypes.Structure):  # noqa: N801
-            _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.c_void_p)]
-
-        blob_in, blob_out = DATA_BLOB(), DATA_BLOB()
-        buf = ctypes.create_string_buffer(enc[5:])
-        blob_in.cbData, blob_in.pbData = len(enc) - 5, ctypes.addressof(buf)
-        if not ctypes.windll.crypt32.CryptUnprotectData(
-            ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
-        ):
-            raise ChromeCookieReadError("DPAPI 解密失败（当前 Windows 用户与 Chrome 用户不一致？）")
-        key = ctypes.string_at(blob_out.pbData, blob_out.cbData)
-        ctypes.windll.kernel32.LocalFree(blob_out.pbData)
-        return key  # Windows: AES key 为原始 32 字节
-
+        return _key_windows()
     raise ChromeCookieReadError(f"不支持的平台: {platform.system()}")
 
 
@@ -206,6 +212,16 @@ def _decrypt_v10(key: bytes, blob: bytes, strip_integrity: bool) -> bytes:
 
 
 # ---------------------------------------------------------------- 对外读取
+
+def _decrypt_cookie_blob(key: bytes, blob: bytes, value: str | None, strip_integrity: bool) -> str:
+    """解密单条 cookie 密文：v10 头走 AES 解密，否则用明文 value。"""
+    if blob.startswith(b"v10"):
+        try:
+            return _decrypt_v10(key, blob, strip_integrity).decode("utf-8")
+        except UnicodeDecodeError:
+            return ""  # 解密异常条目跳过（理论上不出现）
+    return value or ""
+
 
 def read_chrome_cookies(domain_filter: str = "xiaohongshu.com") -> list[dict]:
     """读取 Chrome 登录态 Cookie（指定域名），返回 [{name, value, domain, path, expires}]。
@@ -239,13 +255,9 @@ def read_chrome_cookies(domain_filter: str = "xiaohongshu.com") -> list[dict]:
         blob = enc_value if isinstance(enc_value, bytes) else (
             enc_value.encode("latin1") if enc_value else b""
         )
-        if blob.startswith(b"v10"):
-            try:
-                val = _decrypt_v10(key, blob, strip_integrity).decode("utf-8")
-            except UnicodeDecodeError:
-                continue  # 解密异常条目跳过（理论上不出现）
-        else:
-            val = value or ""
+        val = _decrypt_cookie_blob(key, blob, value, strip_integrity)
+        if not val:
+            continue
         out.append({
             "name": name,
             "value": val,
