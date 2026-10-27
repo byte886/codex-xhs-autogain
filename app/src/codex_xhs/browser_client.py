@@ -13,6 +13,7 @@ import asyncio
 import json
 import os
 import pathlib
+import sys
 import re
 import subprocess
 import time
@@ -41,8 +42,14 @@ def _ws_endpoint() -> str:
 
 async def _press_consent_once(restore_to: str = "") -> bool:
     """点一次授权弹窗（子进程调 AppleScript）。async 侧用 asyncio.Lock 串行，
-    避免并发 osascript 拥塞 System Events（文件锁版本已实测自锁弃用）。"""
+    避免并发 osascript 拥塞 System Events（文件锁版本已实测自锁弃用）。
+
+    可移植性：仅 macOS（Darwin）+ 脚本存在时才代点；其他平台/缺脚本时静默
+    返回 False，授权弹窗由用户手动点「允许」（连接本身不受影响）。
+    """
     async with _press_lock:
+        if sys.platform != "darwin" or not _PRESS_SCRIPT.exists():
+            return False  # 非 macOS 或无脚本：授权窗由用户手动确认
         try:
             r = await asyncio.to_thread(
                 subprocess.run,
