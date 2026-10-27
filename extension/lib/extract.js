@@ -12,12 +12,12 @@ function xhsExtractSearchNotes(root = document) {
     const img = c.querySelector('img.cover') || c.querySelector('img');
     const authorEl = c.querySelector('.author');
     const likesEl = c.querySelector('.like-wrapper .count, .like-wrapper span, .footer [class*="like"], [class*="like"] .count');
-    const descEl = c.querySelector('.desc, .note-desc, [class*="desc"]');
+    // 标题：新版搜索卡片独立 .title 元素；旧版 .desc/.note-desc 兜底；再兜底封面 alt
+    const titleEl = c.querySelector('.title') || c.querySelector('.desc, .note-desc, [class*="desc"]');
     return {
       id,
       href: href ? (href.startsWith('/') ? 'https://www.xiaohongshu.com' + href : href) : null,
-      // 新版搜索卡片标题在封面图上，DOM 无独立标题元素 → 取 desc/图 alt 兜底
-      title: (descEl ? descEl.innerText.trim() : '') || (img ? img.alt || '' : ''),
+      title: (titleEl ? titleEl.innerText.trim() : '') || (img ? img.alt || '' : ''),
       author: authorEl ? authorEl.innerText.trim() : '',
       img: img ? (img.src || img.getAttribute('data-src')) : null,
       likes: likesEl ? likesEl.innerText.trim() : '',
@@ -75,8 +75,13 @@ function xhsExtractComments(root = document) {
   const TIME = /^(刚刚|昨天|前天|\d+天前|\d+-\d+|\d+小时前|\d+分钟前)$/;
   const out = [];
   const seen = new Set();
-  const container = root.querySelector('[class*="comment"]') || root;
-  const anchors = [...container.querySelectorAll('a[href*="/user/profile/"]')];
+  // 评论区精确容器：新版页面评论用户链 author-wrapper < author-container < interaction-container；
+  // 容器 class 随改版可能失效，容器内 profile 链接过少时回退全文档
+  // （靠 NAV 导航词 + 评论文本存在性过滤，防止把作者/相关推荐/徽标当评论者）
+  let container = root.querySelector('.interaction-container') || root.querySelector('[class*="comment"]');
+  const probe = container ? [...container.querySelectorAll('a[href*="/user/profile/"]')] : [];
+  if (probe.length < 1) container = null;
+  const anchors = [...(container || root).querySelectorAll('a[href*="/user/profile/"]')];
   for (const a of anchors) {
     const m = (a.getAttribute('href') || '').match(/\/user\/profile\/([0-9a-f]{24})/);
     if (!m) continue;
