@@ -51,7 +51,7 @@ async function openXhs() {
     const r = await apiQrcode()
     if (r.ok) {
       guideOk.value = true
-      guide.value = r.guide || '请在打开的 Chrome 小红书首页中扫码登录'
+      guide.value = r.guide || '已在新窗口打开小红书首页（https://www.xiaohongshu.com）。请完成扫码登录'
     } else {
       guideOk.value = false
       qrError.value = r.error || '打开失败'
@@ -93,8 +93,8 @@ onMounted(openXhs)
     <div class="modal qr-modal">
       <h3>登录小红书</h3>
       <p class="qr-tip">
-        小红书登录态已失效。可一键读取本机 Chrome 的登录态恢复（无需复制粘贴）；
-        或改用下方扫码登录。
+        小红书登录态已失效（未检测到有效 Cookie）。可一键读取本机 Chrome 的登录态恢复；
+        或在新打开的页面中完成登录。
       </p>
       <div class="auto-row">
         <button class="btn auto-btn" @click="autoReadChrome" :disabled="autoReading">
@@ -104,12 +104,12 @@ onMounted(openXhs)
         <p v-if="autoMsg" class="auto-msg">{{ autoMsg }}</p>
       </div>
       <div class="qr-stage">
-        <div v-if="loading" class="qr-loading">正在打开 Chrome 小红书首页…</div>
+        <div v-if="loading" class="qr-loading">正在打开小红书登录页（新窗口）…</div>
         <div v-else-if="guideOk" class="qr-guide">
           <p class="guide-main">{{ guide }}</p>
-          <p class="guide-sub">扫码完成后点击「我已扫码完成」检测登录态</p>
+          <p class="guide-sub">请在刚打开的新页面中完成登录；完成后回到本页点击下方按钮重新检测。检测通过后本弹窗将自动关闭，Cookie 即生效。</p>
           <button class="btn check-btn" @click="checkLogin" :disabled="checking">
-            {{ checking ? '检测中…' : '我已扫码完成' }}
+            {{ checking ? '检测中…' : '我已登录，重新检测' }}
           </button>
         </div>
         <div v-else class="qr-error">
@@ -118,9 +118,9 @@ onMounted(openXhs)
         </div>
       </div>
       <div class="qr-meta">
-        <span v-if="guideOk">手动检测模式（不自动连接）</span>
+        <span v-if="guideOk">登录页已打开（新窗口）</span>
         <span v-else>&nbsp;</span>
-        <button class="btn" @click="openXhs" :disabled="loading">重新打开</button>
+        <button class="btn" @click="openXhs" :disabled="loading">重新打开登录页</button>
       </div>
       <button class="close" @click="emit('close')">关闭</button>
     </div>

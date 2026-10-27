@@ -187,6 +187,9 @@ onMounted(async () => {
     <section>
       <div class="sec-title">Cookie</div>
       <div class="cookie-box">
+        <div class="cookie-status" :class="appState.login?.logged_in ? 'ok' : 'err'">
+          {{ appState.login?.logged_in ? `● 已登录（${appState.login.nickname || '小红书'}），Cookie 有效` : '● 未登录 / Cookie 失效，请登录或导入 Cookie' }}
+        </div>
         <div class="cookie-actions">
           <button class="c-btn icon" title="显示/隐藏 Cookie" @click="showCookie = !showCookie">
             {{ showCookie ? '▾' : '▸' }}
@@ -236,3 +239,16 @@ onMounted(async () => {
     </section>
   </aside>
 </template>
+
+<style scoped>
+.cookie-status {
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  border: 1px solid transparent;
+}
+.cookie-status.ok { color: #16a34a; background: #f0fdf4; border-color: #bbf7d0; }
+.cookie-status.err { color: #c0392b; background: #fef2f2; border-color: #fecaca; }
+</style>
