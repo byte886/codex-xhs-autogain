@@ -475,6 +475,24 @@ class CloneReq(BaseModel):
 
 
 @app.post("/api/clone")
+async def clone(req: CloneReq):
+    """克隆：取详情 → 下载图片到 images → 返回可编辑载荷。"""
+    await _require_login()
+    con = _db()
+    r = con.execute("SELECT * FROM notes WHERE feed_id=?", (req.feed_id,)).fetchone()
+    if not r:
+        raise HTTPException(404, "笔记不存在")
+    n = dict(r)
+
+    images = await _collect_images(n, req.feed_id)
+    detail_ok = len(images) > 0
+    local_images = _download_images(req.feed_id, images)
+
+    n["images_local"] = local_images
+    n["detail_ok"] = detail_ok
+    return n
+
+
 async def _collect_images(n: dict, feed_id: str) -> list:
     """克隆用：取详情图片列表（本地浏览器提取，失败回退封面）。返回图片 URL 列表。"""
     images = []
@@ -514,23 +532,6 @@ def _download_images(feed_id: str, images: list) -> list:
     """克隆用：并行下载图片（≤9 张）。返回本地路径列表。"""
     with ThreadPoolExecutor(max_workers=6) as ex:
         return list(ex.map(lambda p: _download_image(feed_id, p[0], p[1]), enumerate(images[:9])))
-
-
-async def clone(req: CloneReq):
-    """克隆：取详情 → 下载图片到 images → 返回可编辑载荷。"""
-    await _require_login()
-    con = _db()
-    r = con.execute("SELECT * FROM notes WHERE feed_id=?", (req.feed_id,)).fetchone()
-    if not r:
-        raise HTTPException(404, "笔记不存在")
-    n = dict(r)
-
-    images = await _collect_images(n, req.feed_id)
-    local_images = _download_images(req.feed_id, images)
-
-    n["images_local"] = local_images
-    n["detail_ok"] = detail_ok
-    return n
 
 
 # ================= 采集客户（P4） =================
@@ -719,7 +720,6 @@ async def refresh_cookie_from_chrome():
     }
 
 
-@app.post("/api/import_cookie")
 async def _verify_cookies_or_raise(cookies: list) -> dict:
     """校验导入/读取的 Cookie（独立 profile Chrome），失败抛 502；后台窗口模式用后即停。"""
     from codex_xhs import browser_client
@@ -737,6 +737,7 @@ async def _verify_cookies_or_raise(cookies: list) -> dict:
             pass
 
 
+@app.post("/api/import_cookie")
 async def import_cookie(req: ImportCookieReq):
     """导入 Cookie（新架构）：解析 → 注入独立 profile Chrome 校验登录态 → 有效则保存到本地。
 

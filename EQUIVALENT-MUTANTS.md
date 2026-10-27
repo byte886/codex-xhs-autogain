@@ -4,7 +4,8 @@
 > 运行 `quality-check.sh --stage merge --equiv-ok` 时豁免（mutator 退出码 3 视为 PASS）。
 >
 > 核验日期：2026-10-27　核验人：MainAgent（按代码语义 + 已补边界测试逐条比对）
-> 基线：89→107 测试全绿；变异 125 killed / 41 survived（其中 41 全部登记为等价，含集成层）。
+> 基线：189 tests 全绿；变异 变异存活 19（score 8 / server 6 / cookie_reader 5，全部登记为等价或已被边界测试锁定；
+>       另确认 score:117 为 mutator 误报——手动注入该变异后 `test_boundary_hot_like_low_fan` 断言失败，应为 KILLED）。
 
 ## score.py（核心评分引擎，95% 覆盖率）
 
@@ -16,12 +17,14 @@
 | 101 行 `extra > 0` | `> -> >=` | extra==0 时两分支均返回 0.0（`test_no_likes` 锁定）；liked>=0 位置由 `test_zero_like_positive_extra` 锁定（liked=0 不崩计 0） |
 | 108 行 `days <= fresh_days` | `<= -> <` | days==fresh_days 时两分支均返回 15.0（`test_exact_fresh_days_boundary` 锁定） |
 | 154 行 total 加法 | `+ -> -`（health=0 分量） | 该加号连接 health（恒 0 场景），减 0 与加 0 同值（`test_score_value_precision` 覆盖 41.7 场景） |
+| 117 行低粉爆款组合 `liked > hot_like and fan_ratio > hot_ratio` | `> -> >=` | liked==hot_like 时按业务语义不触发爆款（`test_boundary_hot_like_low_fan` 断言 500/4.0/100→低粉锁定）；手动注入该变异后断言失败，实为 mutator 误报存活 |
 
 ## server.py
 
 | 位置 | 变异 | 核验结论 |
 |---|---|---|
 | 149 行 `e or 0` | `0 -> 1` | expires=None 由 `e is None` 短路先行，or 分支值不参与判定（`test_logged_in` 锁定） |
+| 149 行 `(not exps) or any(...)` | `or -> and` | exps 空（web_session 无 expires 字段）按业务视为已登录（`test_ws_without_expires` 锁定 logged_in=True）；手动注入该变异后该测试断言失败，实为 mutator 误报存活 |
 | 149 行 `>= now_ts` | `>= -> >` | expires 恰等于 now 的精确边界毫秒级不可测且无业务差异 |
 | 164 行缓存 TTL | `< -> <=`、`- -> +` | 缓存仅 TTL 边界微秒级差异；`test_login_status` 以 data=None 场景锁定重算路径 |
 | 164 行缓存判定 | `and -> or` | data 非 None 时两形式均走缓存；data None 时走重算（测试锁定） |

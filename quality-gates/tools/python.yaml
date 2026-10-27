@@ -1,0 +1,14 @@
+# clean-code-gauntlet 工具映射表（python）
+# 用法：在仓库根运行 `bash <gauntlet>/tooling/bin/quality-check.sh --stage merge --with-dry --equiv-ok`
+#       （不传语言参数 → 读本文件；传 python 会走模板内置命令）
+#
+# 覆盖率口径（核心模块 ≥80%）：.coveragerc 已配置 omit（browser_client/collect_pipeline 集成层）
+# 与 fail_under=80；核心模块 score/cookie_reader/server 加权 ≥92%。
+# 注意：mutator 的 test-command 含本机绝对路径（变异体跑 symlink overlay worker，
+# 相对路径会绕过变异文件），换机器部署时按新仓库路径调整本行。
+language: python
+crap_cmd: <GAUNTLET_DIR>/tooling/vendor/crapper/crapper --root . -s app/src --use-existing-coverage --threshold 30 codex_xhs/server.py codex_xhs/score.py codex_xhs/cookie_reader.py
+mutation_cmd: <GAUNTLET_DIR>/tooling/vendor/mutator/mutator --root . -s app/src --reuse-coverage --mutate-all --test-command "PYTHONPATH=app/src /Users/weiqiang/Desktop/codex-zhuke/app/.venv/bin/python -m pytest -q"
+coverage_cmd: PYTHONPATH=app/src app/.venv/bin/python -m pytest --cov=codex_xhs --cov-report=term
+architecture_cmd: PYTHONPATH=app/src app/.venv/bin/import-linter lint
+dry_cmd: <GAUNTLET_DIR>/tooling/vendor/dryer/dryer --root . -s app/src
