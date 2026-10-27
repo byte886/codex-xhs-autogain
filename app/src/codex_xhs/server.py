@@ -402,7 +402,15 @@ async def collect_clients(req: ClientsReq):
     await _require_login()
     try:
         from codex_xhs import browser_client
-        users = await browser_client.clients(req.feed_id, req.xsec_token)
+        # xsec_token 兜底：调用方未传时从本地库自动补查（explore/{id} 直链会 404，必须带 token）
+        token = req.xsec_token
+        if not token:
+            con = _db()
+            row = con.execute("SELECT xsec_token FROM notes WHERE feed_id=?", (req.feed_id,)).fetchone()
+            con.close()
+            if row and row[0]:
+                token = row[0]
+        users = await browser_client.clients(req.feed_id, token)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"浏览器采集失败：{e}")
     con = _db()

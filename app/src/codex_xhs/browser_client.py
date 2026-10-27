@@ -10,6 +10,7 @@
 - DOM 提取复用 extension/lib/extract.js（页面内 evaluate 注入，单一提取源）。
 """
 import asyncio
+import json
 import os
 import pathlib
 import subprocess
@@ -89,12 +90,36 @@ async def get_browser():
         try:
             if os.environ.get("XHS_BROWSER_MODE") == "profile":
                 _browser = await _connect_profile()
+                await _inject_saved_cookies()  # 重启后端后自动恢复登录态（幂等注入 cookies.json）
             else:
                 _browser = await _connect_daily_with_consent()
             return _browser
         except Exception as e:  # noqa: BLE001
             _fail_until = time.monotonic() + 20
             raise RuntimeError(f"连接浏览器失败: {e}") from e
+
+
+async def _inject_saved_cookies():
+    """profile 模式：把已保存的 cookies.json 自动注入独立浏览器（幂等）。
+
+    背景（实测发现）：重启后端后 _browser 缓存重置、重新连接 9223 独立 Chrome，
+    之前 verify 时注入的 Cookie 会丢（登录态变 unknown/not_logged_in，熔断误伤）。
+    每次 profile 连接成功后覆盖注入 cookies.json：Cookie 相同则无害，失败静默。
+    注意：本函数只在 get_browser() 的 _connect_lock 内被调用，直接使用模块级 _browser；
+    严禁在此处再次调用 get_browser()（asyncio.Lock 不可重入，会死锁挂起）。
+    """
+    try:
+        p = _ROOT / "data" / "cookies.json"
+        if not p.exists():
+            return False
+        data = json.loads(p.read_text(encoding="utf8"))
+        ck = data.get("cookies", [])
+        if not ck:
+            return False
+        await _browser.contexts[0].add_cookies(ck)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 async def _connect_profile():
