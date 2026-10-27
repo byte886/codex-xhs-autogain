@@ -170,3 +170,24 @@ export async function apiDraftDelete(id: number): Promise<{ ok: boolean; note?: 
     body: JSON.stringify({ id }),
   }))
 }
+
+export interface CdpStatus {
+  ok: boolean
+  port: number
+  port_ready: boolean
+  chrome_running: boolean
+  chrome_found: boolean
+  profile_dir: string
+}
+
+export async function apiCdpStatus(): Promise<CdpStatus> {
+  return j(await fetch(`${BASE}/api/cdp_status`))
+}
+
+export async function apiCdpSetup(restart = false): Promise<{ ok: boolean; status?: string; note?: string; need_restart?: boolean }> {
+  return j(await fetch(`${BASE}/api/cdp_setup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ restart }),
+  }))
+}

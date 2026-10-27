@@ -185,6 +185,68 @@ async def login_status():
     return result
 
 
+# ================= CDP 自动化配置 =================
+# 交付模式：APP 自动/半自动配置外部 Chrome 的远程调试（普通客户无需懂 CDP）。
+# 方案（谷歌/官方调研）：Chrome 启动参数 --remote-debugging-port + 独立 profile（--user-data-dir）。
+#   已运行实例不生效新参数 → Chrome 已运行但未开调试时需重启（半自动引导/确认后自动重启）。
+async def _probe_cdp(port: int) -> bool:
+    """探测调试端口是否可连（/json/version 通 = 已开启远程调试）。"""
+    try:
+        reqh = urllib.request.Request(f"http://127.0.0.1:{port}/json/version", method="GET")
+        with urllib.request.urlopen(reqh, timeout=3) as resp:
+            return resp.status == 200
+    except Exception:  # noqa: BLE001
+        return False
+
+
+class CdpSetupReq(BaseModel):
+    restart: bool = False  # Chrome 已运行未开调试时，是否自动退出重启
+
+
+@app.get("/api/cdp_status")
+async def cdp_status():
+    """CDP 自动化状态：Chrome 是否安装/运行、调试端口是否就绪、profile 路径。"""
+    from codex_xhs import browser_client
+    port, profile_dir = browser_client._profile_settings()
+    return {
+        "ok": True,
+        "port": port,
+        "port_ready": await _probe_cdp(port),
+        "chrome_running": browser_client.chrome_running(),
+        "chrome_found": browser_client.chrome_executable() is not None,
+        "profile_dir": profile_dir,
+    }
+
+
+@app.post("/api/cdp_setup")
+async def cdp_setup(req: CdpSetupReq):
+    """一键配置 CDP（自动/半自动）：
+    - 端口已就绪 → 无需动作；
+    - Chrome 未运行 → 自动拉起（带调试参数 + 独立 profile）；
+    - Chrome 已运行但未开调试 → 返回 need_restart 提示；restart=true 时自动退出并重启。
+    """
+    from codex_xhs import browser_client
+    port, profile_dir = browser_client._profile_settings()
+    if await _probe_cdp(port):
+        return {"ok": True, "status": "ready", "note": f"CDP 已就绪（端口 {port}）"}
+    if browser_client.chrome_executable() is None:
+        return {"ok": False, "note": "未找到 Chrome，请先安装 Google Chrome 后再试"}
+    if browser_client.chrome_running():
+        if not req.restart:
+            return {
+                "ok": False, "need_restart": True,
+                "note": "Chrome 已在运行但未开启远程调试（新参数对已运行实例不生效），请退出 Chrome 后再次点击「一键配置」",
+            }
+        browser_client.quit_chrome()
+        await asyncio.sleep(2)
+    browser_client.launch_profile_chrome()
+    for _ in range(30):
+        await asyncio.sleep(1)
+        if await _probe_cdp(port):
+            return {"ok": True, "status": "ready", "note": "CDP 已配置完成（Chrome 已带调试参数启动，独立 profile）"}
+    return {"ok": False, "note": "Chrome 已拉起但调试端口未就绪，请稍后重试或检查 Chrome 是否被系统拦截"}
+
+
 @app.get("/api/qrcode")
 async def qrcode():
     """Cookie 失效时前端引导扫码：新架构（Docker 已退役）下登录发生在外部 Chrome 内，

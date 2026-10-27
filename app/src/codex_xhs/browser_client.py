@@ -125,28 +125,85 @@ async def _inject_saved_cookies():
         return False
 
 
-async def _connect_profile():
-    """交付模式：APP 自拉独立 profile Chrome（无授权弹窗），连接失败时自动拉起。"""
-    global _pw
+def chrome_executable() -> str | None:
+    """跨平台定位 Google Chrome 可执行文件（macOS / Windows）。找不到返回 None。"""
+    if sys.platform == "darwin":
+        p = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        return p if os.path.exists(p) else None
+    if os.name == "nt":
+        candidates = [
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ]
+        for p in candidates:
+            if p and os.path.exists(p):
+                return p
+    return None
+
+
+def _profile_settings() -> tuple[int, str]:
+    """CDP 端口与独立 profile 目录（交付模式：不污染用户日常登录态）。"""
     port = int(os.environ.get("XHS_PROFILE_PORT", "9223"))
     profile_dir = os.environ.get("XHS_PROFILE_DIR") or os.path.join(
         os.path.expanduser("~"), ".codex-xhs-profile"
     )
+    return port, profile_dir
+
+
+def chrome_running() -> bool:
+    """检测 Chrome 是否在运行（跨平台）。"""
+    try:
+        if os.name == "nt":
+            out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq chrome.exe"],
+                                 capture_output=True, text=True, timeout=10).stdout
+            return "chrome.exe" in out
+        return subprocess.run(["pgrep", "-x", "Google Chrome"], capture_output=True,
+                              timeout=5).returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def quit_chrome() -> bool:
+    """退出 Chrome（macOS osascript；Windows taskkill）。返回是否发起。"""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/IM", "chrome.exe", "/F"],
+                           capture_output=True, timeout=10)
+            return True
+        r = subprocess.run(["osascript", "-e", 'tell application "Google Chrome" to quit'],
+                           capture_output=True, timeout=10)
+        return r.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def launch_profile_chrome() -> str | None:
+    """自动拉起带调试参数的独立 profile Chrome。返回 Chrome 可执行路径（找不到返回 None）。"""
+    chrome = chrome_executable()
+    if not chrome:
+        return None
+    port, profile_dir = _profile_settings()
+    os.makedirs(profile_dir, exist_ok=True)
+    win_args = [] if os.environ.get("XHS_PROFILE_WINDOW") == "normal" else ["--start-minimized"]
+    subprocess.Popen(
+        [chrome, f"--user-data-dir={profile_dir}", f"--remote-debugging-port={port}",
+         "--no-first-run", "--no-default-browser-check", "--new-window", *win_args],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    return chrome
+
+
+async def _connect_profile():
+    """交付模式：APP 自拉独立 profile Chrome（无授权弹窗），连接失败时自动拉起。"""
+    global _pw
+    port, profile_dir = _profile_settings()
     if _pw is None:
         _pw = await async_playwright().start()
     try:
         return await _pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}", timeout=8000)
     except Exception:
-        chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        os.makedirs(profile_dir, exist_ok=True)
-        # 窗口策略：生产默认 --start-minimized（后台隐形，Dock 一个图标）；
-        # XHS_PROFILE_WINDOW=normal 时正常显示（演示/用户扫码需要看到窗口）。
-        win_args = [] if os.environ.get("XHS_PROFILE_WINDOW") == "normal" else ["--start-minimized"]
-        subprocess.Popen(
-            [chrome, f"--user-data-dir={profile_dir}", f"--remote-debugging-port={port}",
-             "--no-first-run", "--no-default-browser-check", "--new-window", *win_args],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        launch_profile_chrome()
         for _ in range(30):
             await asyncio.sleep(1)
             try:

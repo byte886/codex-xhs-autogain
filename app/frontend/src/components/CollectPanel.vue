@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { appState, setStage, toast } from '../store'
-import { apiCollectProgress, apiCollectStart, apiCollectStop, apiCookieInfo, apiImportCookieText, apiLoginStatus, apiNotes } from '../api'
-import type { CookieItem, ImportCookieResult } from '../api'
+import { apiCollectProgress, apiCollectStart, apiCollectStop, apiCookieInfo, apiImportCookieText, apiLoginStatus, apiNotes, apiCdpStatus, apiCdpSetup } from '../api'
+import type { CookieItem, ImportCookieResult, CdpStatus } from '../api'
 
 const emit = defineEmits<{ (e: 'collect-started'): void; (e: 'open-login'): void }>()
 
@@ -14,6 +14,32 @@ const importText = ref('')
 const importing = ref(false)
 const importResult = ref<ImportCookieResult | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
+
+// CDP 自动化配置
+const cdpStatus = ref<CdpStatus | null>(null)
+const cdpBusy = ref(false)
+async function refreshCdpStatus() {
+  try {
+    cdpStatus.value = await apiCdpStatus()
+  } catch {
+    cdpStatus.value = null
+  }
+}
+async function doCdpSetup(restart = false) {
+  if (cdpBusy.value) return
+  cdpBusy.value = true
+  try {
+    const r = await apiCdpSetup(restart)
+    if (r.ok) toast(r.note || 'CDP 已就绪')
+    else if (r.need_restart) toast(r.note || '请退出 Chrome 后再次点击')
+    else toast(r.note || '配置失败')
+    if (r.ok || !r.need_restart) refreshCdpStatus()
+  } catch (e) {
+    toast(`CDP 配置失败：${(e as Error).message}`)
+  } finally {
+    cdpBusy.value = false
+  }
+}
 
 async function refreshCookieInfo() {
   try {
@@ -153,6 +179,7 @@ watch(() => appState.cookieRefreshTick, () => refreshCookieInfo())
 
 onMounted(async () => {
   refreshCookieInfo()
+  refreshCdpStatus()
   try {
     const lg = await apiLoginStatus()
     appState.login = { logged_in: !!lg.logged_in, nickname: lg.nickname || '' }
@@ -233,6 +260,29 @@ onMounted(async () => {
           <span v-if="appState.collecting" class="btn-spinner" />
           {{ appState.collecting ? '停止采集' : '开始采集' }}
         </button>
+      </div>
+    </section>
+
+    <!-- CDP 自动化配置（Chrome 远程调试：普通客户无需懂 CDP，一键/半自动配置） -->
+    <section>
+      <div class="sec-title">CDP 自动化 <span class="tag">配置</span></div>
+      <div class="cdp-box">
+        <div class="cdp-status" :class="cdpStatus?.port_ready ? 'ok' : 'err'">
+          {{ cdpStatus?.port_ready ? `● CDP 已就绪（端口 ${cdpStatus.port}）` : '○ CDP 未就绪（Chrome 未开启远程调试）' }}
+          <span class="cdp-sub">{{ cdpStatus?.chrome_running ? 'Chrome 运行中' : 'Chrome 未运行' }} · profile: {{ cdpStatus?.profile_dir || '…' }}</span>
+        </div>
+        <div class="cdp-actions">
+          <button class="c-btn" :disabled="cdpBusy" @click="doCdpSetup()">
+            {{ cdpBusy ? '配置中…' : '一键配置 CDP' }}
+          </button>
+          <button class="c-btn" :disabled="cdpBusy" @click="doCdpSetup(true)" title="Chrome 已在运行但未开调试时，自动退出并以调试参数重启">
+            自动重启并配置
+          </button>
+          <button class="c-btn" @click="refreshCdpStatus">刷新状态</button>
+        </div>
+        <p class="cdp-hint">
+          自动拉起 Chrome（带远程调试 + 独立 profile，不污染日常登录态）。若 Chrome 已在运行，新参数不生效，请先退出 Chrome 或点「自动重启并配置」。
+        </p>
       </div>
     </section>
 
@@ -323,4 +373,14 @@ onMounted(async () => {
 @keyframes btn-spin {
   to { transform: rotate(360deg); }
 }
+</style>
+<style scoped>
+.cdp-box { border: 1px solid #f0f0f0; border-radius: 8px; padding: 10px; }
+.cdp-status { font-size: 12px; line-height: 1.5; padding: 6px 10px; border-radius: 6px; margin-bottom: 8px; border: 1px solid transparent; }
+.cdp-status.ok { color: #16a34a; background: #f0fdf4; border-color: #bbf7d0; }
+.cdp-status.err { color: #c0392b; background: #fef2f2; border-color: #fecaca; }
+.cdp-sub { display: block; color: #888; font-size: 11px; margin-top: 2px; word-break: break-all; }
+.cdp-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.cdp-actions .c-btn { font-size: 12px; }
+.cdp-hint { font-size: 11px; color: #999; margin-top: 8px; line-height: 1.6; }
 </style>
