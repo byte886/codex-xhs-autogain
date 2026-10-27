@@ -249,7 +249,6 @@ def _persist_notes(keyword: str, notes: list) -> tuple:
             saved += 1
         except Exception:
             continue
-        time.sleep(_INTERVAL[0] + random.random() * (_INTERVAL[1] - _INTERVAL[0]))
     con.commit()
 
     def _dl_cover(n):
