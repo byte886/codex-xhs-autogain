@@ -43,9 +43,10 @@ function xhsExtractNoteDetail(root = document) {
   const dateEl = root.querySelector('#date, .date, .publish-time');
   // 视频判断：主笔记为视频时页面有播放器 video/播放容器（用于二次修正 note_type）
   const videoEl = root.querySelector('video, [class*="video-player"], [class*="player"]');
-  // 主图：仅笔记图床（sns-webpic/sns-img/sns-preview）——排除头像(avatar)、静态资源(fe-static/formula-static)、
-  // logo、二维码、svg 等页面装饰图（它们 URL 也含 xhscdn.com，此前会混入克隆图片导致多余图）
-  const imgs = [...root.querySelectorAll('.swiper-slide img, #noteContainer img, .slide img, .carousel img, [class*="slide"] img')]
+  // 主图：小红书笔记正文轮播图。官方主图 class 为 note-slider-img（社区爬虫实证：所有笔记图
+  // 均含此属性，评论区图/头像/推荐区不含，天然隔离）；.swiper-wrapper/.swiper-slide 兜底新版结构。
+  // 再加域名过滤（仅 sns-webpic/sns-img/sns-preview）+ 排除头像/静态资源/logo/二维码/svg。
+  const imgs = [...root.querySelectorAll('img.note-slider-img, .swiper-wrapper img, .swiper-slide img')]
     .map((i) => i.src || i.getAttribute('data-src') || null)
     .filter((u) => u && /sns-webpic|sns-img|sns-preview/i.test(u))                       // 仅笔记图床域名
     .filter((u) => !/avatar|fe-static|formula-static|logo|qrcode|svg/i.test(u))          // 排除页面装饰图
