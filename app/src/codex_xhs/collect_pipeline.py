@@ -27,15 +27,18 @@ SESSION_MAX_NOTES = 20        # 单次采集会话最多 20 条（真人一次�
 
 
 def _parse_likes(s: str) -> int:
-    """解析互动数：'151'→151, '1.2万'→12000, '999+'→999"""
+    """解析互动数：'151'→151, '1.2万'→12000, '3千'→3000, '999+'→999"""
     if not s:
         return 0
     s = s.strip().replace(",", "")
-    m = re.match(r"([\d.]+)(万|w|W)?", s)
+    m = re.match(r"([\d.]+)(万|千|w|W)?", s)
     if not m:
         return 0
     v = float(m.group(1))
-    if m.group(2):
+    unit = m.group(2)
+    if unit == "千":
+        v *= 1000
+    elif unit:
         v *= 10000
     return int(v)
 

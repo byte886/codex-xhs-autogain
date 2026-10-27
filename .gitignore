@@ -37,3 +37,8 @@ extension/manifest.json
 data/cookies*.json
 data/cookies*.bak
 data/cookies*
+/.venv
+
+# gauntlet 工具产物
+.metrics/
+target/

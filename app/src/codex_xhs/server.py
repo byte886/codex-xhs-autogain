@@ -642,6 +642,7 @@ def _parse_cookie_text(text: str) -> list[dict]:
 def _save_cookies_file(cookies: list[dict]):
     """备份旧文件后保存 cookies.json（供 profile 模式启动自动载入）。"""
     dest = BASE / "data" / "cookies.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         dest.replace(dest.with_suffix(".json.bak"))
     dest.write_text(json.dumps(
