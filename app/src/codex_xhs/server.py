@@ -193,37 +193,41 @@ async def _require_login():
 
 @app.post("/api/search")
 async def search(req: SearchReq):
-    """搜索 → 详情+粉丝补全 → 评分 → 落库。返回新增条数与最新 TOP 评分。"""
+    """搜索（同步版，兼容旧前端）：采集 → 评分 → 落库。返回新增条数与最新 TOP 评分。"""
     await _require_login()
-    con = _db()
-    before = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
-    source = "关键词搜索（本地 Chrome）"
-    search_err = ""
+    before = _db().execute("SELECT COUNT(*) FROM notes").fetchone()[0]
     try:
-        # 本地浏览器搜索：Playwright 控制外部 Chrome（真实设备/真实登录态），DOM 层提取
-        notes = await search_via_browser(req.keyword, req.limit)
+        res = await search_via_browser(req.keyword, req.limit)
+        notes = res.get("items", [])
     except Exception as e:
-        notes = []
-        search_err = str(e)
+        return {"added": 0, "total": before, "top": [], "note": f"搜索未返回结果（{str(e)[:80]}），请确认 Chrome 已打开并登录小红书后重试"}
     if not notes:
-        return {"added": 0, "total": before, "top": [], "note": f"搜索未返回结果（{search_err[:80]}），请确认 Chrome 已打开并登录小红书后重试"}
+        return {"added": 0, "total": before, "top": [], "note": "搜索未返回结果，请确认 Chrome 已打开并登录小红书后重试"}
+    saved, total, top = _persist_notes(req.keyword, notes)
+    return {"added": saved, "total": total, "top": top, "source": "关键词搜索（本地 Chrome）"}
 
-    # 数据模型：搜索结果用完即失效——新结果替换旧结果（旧搜索批次不长期保留；
-    # 长期资产仅发布记录/草稿/采集客户）。旧批次在下一次搜索时被整体清空。
+
+# ================= 任务式采集（开始采集 / 进度 / 停止） =================
+# 采集与展示分离：采集是后台异步任务（滚动平台搜索页逐批提取，支持中途停止），
+# 采满目标数 / 平台不再增长 / 用户停止 之后统一落库并评分排序，前端再展示。
+# 这样避免"边采边排"导致的列表跳变（先采集后排序，样本固定排序才稳定）。
+import asyncio
+import uuid
+
+_COLLECT_TASKS: dict = {}
+
+
+def _persist_notes(keyword: str, notes: list) -> tuple:
+    """搜索/采集结果落库：新结果替换旧批次（用完即失效）+ 本地评分 + 封面下载。
+    返回 (added, total, top)。"""
+    con = _db()
     con.execute("DELETE FROM notes")
     con.commit()
-
-    cache = {}
-    saved = 0
     now = datetime.datetime.now().isoformat(timespec="seconds")
+    saved = 0
     for n in notes:
         try:
-            n["keyword"] = req.keyword
-            # 轻量采集 v2：列表字段直接入库，不逐条抓详情/作者主页
-            #（每条详情+主页 ≈ 15s，20 条要 6 分钟；详情/作者在「一键克隆」时按需补全）
-            # 封面图采集时下载到本地（xhscdn 防盗链，浏览器直连会失败；失败不阻断落库）
-            cover_local = ""
-            # 封面下载移出循环（循环后并发批量下载，网络 IO 并行不占拟人化节奏）
+            n["keyword"] = keyword
             n["local_cover"] = ""
             try:
                 si = rank_notes([n])[0]["score_info"]
@@ -232,7 +236,7 @@ async def search(req: SearchReq):
             con.execute(
                 "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    n.get("feed_id"), req.keyword, n.get("title", ""), n.get("type", ""),
+                    n.get("feed_id"), keyword, n.get("title", ""), n.get("type", ""),
                     n.get("user_id"), n.get("nickname", ""), n.get("avatar", ""),
                     n.get("cover_url", ""), n.get("xsec_token", ""), n.get("desc", ""),
                     n.get("ip_location", ""),
@@ -248,7 +252,6 @@ async def search(req: SearchReq):
         time.sleep(_INTERVAL[0] + random.random() * (_INTERVAL[1] - _INTERVAL[0]))
     con.commit()
 
-    # 封面并发下载（网络 IO 并行，不占拟人化请求节奏；已存在跳过）
     def _dl_cover(n):
         if not n.get("cover_url"):
             return
@@ -272,12 +275,74 @@ async def search(req: SearchReq):
         "SELECT feed_id, title, nickname, liked_count, fans_count, score, tag, cover_url "
         "FROM notes ORDER BY score DESC LIMIT 10"
     ).fetchall()
-    return {
-        "added": saved,
-        "total": con.execute("SELECT COUNT(*) FROM notes").fetchone()[0],
-        "top": [dict(r) for r in top],
-        "source": source,
+    total = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+    return saved, total, [dict(r) for r in top]
+
+
+@app.post("/api/collect_start")
+async def collect_start(req: SearchReq):
+    """启动采集任务：后台滚动平台搜索页逐批提取，直到满额/平台不增长/用户停止。"""
+    await _require_login()
+    for tid, st in list(_COLLECT_TASKS.items()):
+        if st.get("status") == "running":
+            st["stop_event"] = True
+    tid = uuid.uuid4().hex[:12]
+    state = {
+        "status": "running", "keyword": req.keyword, "limit": req.limit,
+        "collected": 0, "note": "", "stop_event": False,
     }
+    _COLLECT_TASKS[tid] = state
+
+    async def worker():
+        try:
+            res = await search_via_browser(
+                req.keyword, req.limit,
+                on_progress=lambda n: state.__setitem__("collected", n),
+                should_stop=lambda: state["stop_event"],
+            )
+            items = res["items"]
+            state["collected"] = len(items)
+            saved, total, top = _persist_notes(req.keyword, items)
+            if res.get("stopped"):
+                state["status"] = "stopped"
+                state["note"] = f"已停止：采集到 {len(items)} 条并完成排序" if len(items) else "已停止（未采到结果）"
+            elif len(items) >= req.limit:
+                state["status"] = "done"
+                state["note"] = f"采集完成：{len(items)} 条已按评分排序"
+            else:
+                state["status"] = "done"
+                state["note"] = f"采集完成：平台仅加载 {len(items)} 条（不足 {req.limit}），已按评分排序"
+        except Exception as e:
+            state["status"] = "error"
+            state["note"] = f"采集失败：{str(e)[:100]}"
+
+    state["task"] = asyncio.create_task(worker())
+    return {"ok": True, "task_id": tid, "keyword": req.keyword, "limit": req.limit}
+
+
+@app.get("/api/collect_progress")
+def collect_progress(task_id: str = ""):
+    st = _COLLECT_TASKS.get(task_id)
+    if not st:
+        return {"ok": False, "note": "任务不存在或已过期"}
+    return {
+        "ok": True, "task_id": task_id, "status": st["status"],
+        "keyword": st["keyword"], "limit": st["limit"],
+        "collected": st["collected"], "note": st["note"],
+    }
+
+
+class CollectStopReq(BaseModel):
+    task_id: str
+
+
+@app.post("/api/collect_stop")
+async def collect_stop(req: CollectStopReq):
+    st = _COLLECT_TASKS.get(req.task_id)
+    if st and st.get("status") == "running":
+        st["stop_event"] = True
+        return {"ok": True, "note": "停止已请求，正在收尾…"}
+    return {"ok": False, "note": "任务不存在或已结束"}
 
 
 # ================= 笔记列表 =================

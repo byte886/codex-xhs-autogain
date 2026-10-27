@@ -18,6 +18,29 @@ export async function apiLoginStatus(): Promise<LoginStatus> {
   return j(await fetch(`${BASE}/api/login_status`))
 }
 
+export async function apiCollectStart(p: SearchParams): Promise<{ ok: boolean; task_id: string; keyword: string; limit: number }> {
+  const body = { keyword: p.keyword, limit: p.limit, sort: p.sort, note_type: p.noteType, interval: p.interval }
+  return j(await fetch(`${BASE}/api/collect_start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }))
+}
+
+export async function apiCollectProgress(taskId: string): Promise<{
+  ok: boolean; status: string; keyword: string; limit: number; collected: number; note: string
+}> {
+  return j(await fetch(`${BASE}/api/collect_progress?task_id=${encodeURIComponent(taskId)}`))
+}
+
+export async function apiCollectStop(taskId: string): Promise<{ ok: boolean; note: string }> {
+  return j(await fetch(`${BASE}/api/collect_stop`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId })
+  }))
+}
+
 export async function apiSearch(p: SearchParams): Promise<SearchResult> {
   const body = { keyword: p.keyword, limit: p.limit, sort: p.sort, note_type: p.noteType, interval: p.interval }
   // 90s 超时：平台 AI 搜索页渲染偶发慢/卡，超时后前端自动恢复按钮并提示，避免无限"搜索中"

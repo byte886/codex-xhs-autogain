@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { appState, setStage, toast } from '../store'
-import { apiCookieInfo, apiImportCookieText, apiLoginStatus, apiNotes, apiSearch } from '../api'
+import { apiCollectProgress, apiCollectStart, apiCollectStop, apiCookieInfo, apiImportCookieText, apiLoginStatus, apiNotes } from '../api'
 import type { CookieItem, ImportCookieResult } from '../api'
 
 const emit = defineEmits<{ (e: 'collect-started'): void; (e: 'open-login'): void }>()
@@ -45,10 +45,22 @@ const collectOptions = [
 const sortOptions = ['综合', '最新', '最热']
 const typeOptions = ['全部', '图文', '视频']
 
-async function doSearch() {
-  if (appState.collecting) return // 搜索中防重复触发（淘宝式：点了等结果，无"停止"概念）
+let collectTaskId = ''
+let collectTimer: ReturnType<typeof setInterval> | null = null
+
+// 任务式采集：开始采集 → 后台逐批提取（进度轮询）→ 采满/平台不增长/用户停止后统一评分排序展示
+async function doCollect() {
+  if (appState.collecting) {
+    // 采集中再点 = 停止采集
+    if (collectTaskId) {
+      try { await apiCollectStop(collectTaskId) } catch { /* 忽略 */ }
+      toast('已请求停止，正在收尾并排序…')
+    }
+    return
+  }
+  if (!appState.params.keyword.trim()) { toast('请先输入关键词'); return }
   appState.collecting = true
-  appState.status = '搜索中'
+  appState.status = '采集中'
   appState.selected = {}
   appState.taskLabel = `${appState.params.keyword} · ${appState.params.sort} · ${appState.params.noteType}`
   appState.searchNote = ''
@@ -58,29 +70,49 @@ async function doSearch() {
   setStage('search')
   emit('collect-started')
   try {
-    const r = await apiSearch(appState.params)
-    if (timer) { clearInterval(timer); timer = null }
-    if (r.note) {
-      appState.searchNote = r.note
-      toast(r.note)
-    } else {
-      toast(`采集完成：新增 ${r.added} 条，共 ${r.total} 条`)
-    }
-    // 拉取评分排序结果，自动推进到"筛选结果"阶段
-    const list = await apiNotes('', 'score')
-    appState.notes = list.notes
-    appState.total = list.total
-    appState.count = list.total
-    appState.status = '展示中'
-    setStage('pick')
+    const r = await apiCollectStart(appState.params)
+    collectTaskId = r.task_id
+    appState.searchNote = `采集中 0/${r.limit}…（可随时点「停止采集」）`
+    collectTimer = setInterval(async () => {
+      try {
+        const pr = await apiCollectProgress(collectTaskId)
+        if (pr.status === 'running') {
+          appState.searchNote = `采集中 ${pr.collected}/${pr.limit}…（可随时点「停止采集」）`
+          return
+        }
+        // 完成 / 停止 / 失败：统一收尾
+        if (collectTimer) { clearInterval(collectTimer); collectTimer = null }
+        if (timer) { clearInterval(timer); timer = null }
+        appState.collecting = false
+        if (pr.status === 'error') {
+          appState.searchNote = pr.note || '采集失败'
+          appState.status = '失败'
+          toast(pr.note || '采集失败')
+          if ((pr.note || '').includes('登录态')) emit('open-login')
+          return
+        }
+        appState.searchNote = pr.note || (pr.status === 'stopped' ? '已停止采集' : '采集完成')
+        toast(pr.note || (pr.status === 'stopped' ? '已停止采集' : '采集完成'))
+        // 采集完成后拉评分排序结果，自动推进到"筛选结果"阶段
+        const list = await apiNotes('', 'score')
+        appState.notes = list.notes
+        appState.total = list.total
+        appState.count = list.total
+        appState.status = '展示中'
+        setStage('pick')
+      } catch (e2) {
+        if (collectTimer) { clearInterval(collectTimer); collectTimer = null }
+        if (timer) { clearInterval(timer); timer = null }
+        appState.collecting = false
+        toast(`查询进度失败：${(e2 as Error).message}`)
+      }
+    }, 1000)
   } catch (e) {
     if (timer) { clearInterval(timer); timer = null }
     const msg = (e as Error).message
-    toast(`采集失败：${msg}`)
+    toast(`启动采集失败：${msg}`)
     appState.status = '失败'
-    // 登录态失效（后端熔断 403）→ 引导用户导入 Cookie 或扫码登录
     if (msg.includes('登录态')) emit('open-login')
-  } finally {
     appState.collecting = false
   }
 }
@@ -146,7 +178,7 @@ onMounted(async () => {
       <div class="param-grid">
         <div class="param">
           <label>关键词</label>
-          <input v-model="appState.params.keyword" placeholder="输入关键词，如：翡翠" @keyup.enter="doSearch" />
+          <input v-model="appState.params.keyword" placeholder="输入关键词，如：翡翠" @keyup.enter="doCollect" />
         </div>
         <div class="param-row">
           <div class="param">
@@ -172,9 +204,9 @@ onMounted(async () => {
             <input v-model.number="appState.params.interval" type="number" min="300" step="100" />
           </div>
         </div>
-        <button class="btn-search" :class="{ stop: appState.collecting }" :disabled="appState.collecting" @click="doSearch">
+        <button class="btn-search" :class="{ stop: appState.collecting }" @click="doCollect">
           <span v-if="appState.collecting" class="btn-spinner" />
-          {{ appState.collecting ? '搜索中…' : '开始搜索' }}
+          {{ appState.collecting ? '停止采集' : '开始采集' }}
         </button>
       </div>
     </section>

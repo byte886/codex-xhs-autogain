@@ -13,6 +13,7 @@ import asyncio
 import json
 import os
 import pathlib
+import re
 import subprocess
 import time
 
@@ -31,16 +32,11 @@ _fail_until = 0.0
 
 
 def _ws_endpoint() -> str:
-    port_file = os.environ.get(
-        "CHROME_DEVTOOLS_ACTIVE_PORT",
-        os.path.expanduser("~/Library/Application Support/Google/Chrome/DevToolsActivePort"),
-    )
-    if not os.path.exists(port_file):
-        raise RuntimeError(f"找不到 DevToolsActivePort：{port_file}（请确认日常 Chrome 已打开且开启远程调试）")
-    lines = open(port_file, encoding="utf8").read().strip().split("\n")
-    if len(lines) < 2 or not lines[0].strip().isdigit():
-        raise RuntimeError(f"DevToolsActivePort 内容异常：{lines}")
-    return f"ws://127.0.0.1:{lines[0].strip()}{lines[1].strip()}"
+    """直连常驻生产 Chrome（9223 独立 profile）。connect_over_cdp 支持 http 端点，
+    自动通过 /json/version 解析 WebSocket 地址，不再依赖日常 Chrome 的 DevToolsActivePort。
+    """
+    port = int(os.environ.get("XHS_PROFILE_PORT", "9223"))
+    return f"http://127.0.0.1:{port}"
 
 
 async def _press_consent_once(restore_to: str = "") -> bool:
@@ -154,12 +150,21 @@ async def _connect_profile():
 
 
 async def _page():
-    """取一个可用的页面 target（后台新建，不抢用户前台焦点；失败退化为前台新页）。"""
+    """取一个可用的页面 target（后台新建，不抢用户前台焦点；失败退化为前台新页）。
+
+    后台 tab 会被 Chrome 渲染节流（SPA 永远不渲染 → 采集 0 条），因此建 tab 后
+    立即用 Target.activateTarget 激活再交给调用方 goto；调用方 page.close() 后
+    焦点自然归还原 tab。
+    """
     ctx = (await get_browser()).contexts[0]
     try:
         src = ctx.pages[0]
         cdp = await ctx.new_cdp_session(src)
         resp = await cdp.send("Target.createTarget", {"url": "about:blank", "background": True})
+        try:
+            await cdp.send("Target.activateTarget", {"targetId": resp["targetId"]})
+        except Exception:  # noqa: BLE001
+            pass
         for _ in range(50):
             for p in ctx.pages:
                 if p.url == "about:blank" and len(ctx.pages) > 1 and p != src:
@@ -205,6 +210,12 @@ async def _load(url: str, wait_ms: int = 5000):
     page = await _page()
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=40000)
+        # 后台建 tab 会被 Chrome 渲染节流（SPA 永不渲染 → 采集 0 条）。
+        # 激活页面触发真实渲染；采集/克隆结束 page.close() 后焦点自然归还原 tab。
+        try:
+            await page.bring_to_front()
+        except Exception:  # noqa: BLE001
+            pass
         await page.evaluate(_EXTRACT_SRC)
         await asyncio.sleep(wait_ms / 1000)
         return page
@@ -417,29 +428,70 @@ async def stop_profile():
     return True
 
 
-async def search(keyword: str, limit: int = 30) -> dict:
+async def _wait_note_cards(page, timeout_s: float = 45) -> bool:
+    """等待搜索页出现笔记卡片（section.note-item）。SPA 渲染慢，返回是否出现。"""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            n = await page.evaluate("() => document.querySelectorAll('section.note-item').length")
+        except Exception:  # noqa: BLE001
+            n = 0
+        if n > 0:
+            return True
+        await asyncio.sleep(2.5)
+    return False
+
+
+async def search(keyword: str, limit: int = 30, on_progress=None, should_stop=None) -> dict:
+    """任务式采集：滚动平台搜索页逐批提取，支持去重合并、进度回调与中途停止。
+
+    - on_progress(n)：每批提取后回调已采集数量（供任务进度展示）
+    - should_stop()：返回 True 时提前收尾（用户点「停止采集」）
+    - 总时长上限 120s：平台 AI 搜索页渲染慢时的兜底，超时返回已采集部分
+    """
     url = _XHS + "/search_result?keyword=" + _urlencode(keyword) + "&source=web_search_result_notes"
     page = await _load(url, 2500)
     try:
-        # AI 搜索页渲染慢：总时长上限 60s（避免平台页面加载异常时无限空转），
-        # 提取数有增长才继续滚动；连续 2 轮无增长且已有结果即收尾。
+        # 等首屏卡片渲染（SPA 慢渲染）：最多 ~45s；不见卡片多半是新版 AI 搜索页
+        appeared = await _wait_note_cards(page, timeout_s=45)
+        if not appeared:
+            # AI 搜索页（无 section.note-item）→ 回退无 source 的旧版搜索
+            await page.close()
+            url = _XHS + "/search_result?keyword=" + _urlencode(keyword)
+            page = await _load(url, 2500)
+            appeared = await _wait_note_cards(page, timeout_s=45)
         items = []
-        last = -1
-        deadline = time.time() + 60
+        seen = set()
+        stale = 0
+        deadline = time.time() + 120
         while time.time() < deadline:
             got = await page.evaluate("() => xhsExtractSearchNotes()")
-            if len(got) > len(items):
-                items = got
-                last = -1
-                if len(items) >= limit:
-                    break
+            added = 0
+            for it in got:
+                k = it.get("feed_id") or it.get("id")
+                # 过滤推广/广告卡片：真实笔记 id 是 24 位 hex（推广位是 UUID 等其他格式）
+                if not re.fullmatch(r"[0-9a-f]{24}", str(k or "")):
+                    continue
+                if k not in seen:
+                    seen.add(k)
+                    items.append(it)
+                    added += 1
+            if on_progress:
+                on_progress(len(items))
+            if len(items) >= limit:
+                break
+            if should_stop and should_stop():
+                break
+            if added == 0:
+                stale += 1
+                if stale >= 2 and len(items) > 0:
+                    break  # 页面不再增长：收尾返回现有结果
             else:
-                last += 1
-                if last >= 2 and len(items) > 0:
-                    break  # 已停止增长：收尾返回现有结果
+                stale = 0
             await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
             await asyncio.sleep(1.8)
-        return {"keyword": keyword, "count": len(items[:limit]), "items": items[:limit]}
+        stopped = bool(should_stop and should_stop())
+        return {"keyword": keyword, "count": len(items), "items": items, "stopped": stopped}
     finally:
         await page.close()
 

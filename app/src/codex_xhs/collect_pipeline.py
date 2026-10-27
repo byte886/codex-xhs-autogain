@@ -40,14 +40,19 @@ def _parse_likes(s: str) -> int:
     return int(v)
 
 
-async def search_via_browser(keyword: str, limit: int = 20) -> list[dict]:
+async def search_via_browser(keyword: str, limit: int = 20, on_progress=None, should_stop=None) -> dict:
     """本地浏览器搜索（Playwright 复用 Chrome 连接，DOM 层提取卡片）。
 
-    返回 notes 列表（feed_id/xsec_token/title/nickname/cover_url/liked_count）。
+    任务式采集：支持进度回调 on_progress(n) 与中途停止 should_stop()。
+    返回 {"items": notes 列表, "stopped": bool}。
     """
     from codex_xhs import browser_client
 
-    data = await browser_client.search(keyword, limit)
+    data = await browser_client.search(
+        keyword, limit,
+        on_progress=on_progress,
+        should_stop=should_stop,
+    )
     items = data.get("items", [])[:limit]
     notes = []
     for it in items:
@@ -73,7 +78,7 @@ async def search_via_browser(keyword: str, limit: int = 20) -> list[dict]:
             "collected_count": 0,
             "cover_url": it.get("img", ""),
         })
-    return notes
+    return {"items": notes, "stopped": data.get("stopped", False)}
 
 
 async def _run_browser(cmd: str, arg: str, tag: str, arg2: str = "") -> dict | None:
