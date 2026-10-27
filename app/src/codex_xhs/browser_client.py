@@ -703,20 +703,20 @@ async def search(keyword: str, limit: int = 30, on_progress=None, should_stop=No
         await page.close()
 
 
-async def note(note_id: str, xsec_token: str = "") -> dict:
+async def note(note_id: str, xsec_token: str = "", wait_ms: int = 5000) -> dict:
     url = (
         f"{_XHS}/search_result/{note_id}?xsec_token={_urlencode(xsec_token)}&xsec_source=pc_search"
         if xsec_token else f"{_XHS}/explore/{note_id}"
     )
-    page = await _load(url, 5000)
+    page = await _load(url, wait_ms)
     try:
         return await page.evaluate("() => xhsExtractNoteDetail()")
     finally:
         await page.close()
 
 
-async def user(uid: str) -> dict:
-    page = await _load(f"{_XHS}/user/profile/{uid}", 5000)
+async def user(uid: str, wait_ms: int = 5000) -> dict:
+    page = await _load(f"{_XHS}/user/profile/{uid}", wait_ms)
     try:
         return await page.evaluate("() => xhsExtractUser()")
     finally:

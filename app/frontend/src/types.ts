@@ -53,6 +53,8 @@ export interface SearchParams {
   scope: string
   distance: string
   interval: number
+  /** 快速档：后端同页连续导航补全，更快但节奏更密（默认关，拟人优先） */
+  fast?: boolean
 }
 
 export interface SearchResult {

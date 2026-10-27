@@ -13,7 +13,8 @@ export const appState = reactive({
     timeRange: '不限',
     scope: '不限',
     distance: '不限',
-    interval: 1000
+    interval: 1000,
+    fast: false
   } as SearchParams,
   collecting: false,
   // 搜索结果

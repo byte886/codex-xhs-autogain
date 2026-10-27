@@ -46,6 +46,7 @@ from codex_xhs.collect_pipeline import (  # noqa: E402
     get_user_profile,
     search_via_browser,
 )
+from codex_xhs import browser_client  # noqa: E402（快速档 _enrich_notes 直连详情/主页）
 
 app = FastAPI(title="Codex 自动获客 · 本地工具")
 
@@ -421,6 +422,8 @@ class SearchReq(BaseModel):
     time_range: str = ""
     scope: str = ""
     distance: str = ""
+    # 快速档：同页连续导航补全（去拟人等待），默认关（拟人串行，安全优先）
+    fast: bool = False
 
 
 async def _require_login():
@@ -452,7 +455,7 @@ async def search(req: SearchReq):
         return {"added": 0, "total": before, "top": [], "note": f"搜索未返回结果（{str(e)[:80]}），请确认 Chrome 已打开并登录小红书后重试"}
     if not notes:
         return {"added": 0, "total": before, "top": [], "note": "搜索未返回结果，请确认 Chrome 已打开并登录小红书后重试"}
-    notes = await _enrich_notes(notes)
+    notes = await _enrich_notes(notes, fast=req.fast)
     saved, total, top = _persist_notes(req.keyword, notes)
     return {"added": saved, "total": total, "top": top, "source": "关键词搜索（本地 Chrome）"}
 
@@ -549,17 +552,37 @@ def _persist_notes(keyword: str, notes: list) -> tuple:
     return saved, total, [dict(r) for r in top]
 
 
-async def _enrich_notes(notes: list) -> list:
+async def _enrich_notes(notes: list, fast: bool = False) -> list:
     """详情补全：互动数据（赞/藏/评/转/发布时间/作者 uid）+ 作者粉丝数（按 uid 缓存）。
 
     搜索卡片只有点赞粗值；详情页 SSR 提供全量互动与作者 uid，作者主页提供粉丝数
     ——三者对齐后评分才不失真（低粉爆文判断的前提）。
+
+    fast=True 快速档：直连浏览器同页连续导航（无拟人 sleep、渲染等待缩短），20 条约
+    5 分钟 → 2 分钟；fast=False 拟人串行（默认，安全优先，保持真人浏览节奏）。
     """
     cache: dict = {}
     for n in notes:
         try:
-            n = await get_feed_detail(n)
-            n = await get_user_profile(n, cache)
+            if fast:
+                d = await browser_client.note(n.get("feed_id", ""), n.get("xsec_token", ""), wait_ms=2500)
+                for k in ("liked_count", "collected_count", "comment_count", "shared_count", "user_id", "author_nick"):
+                    if d.get(k):
+                        n[k] = d[k]
+                if d.get("publish_time_ms"):
+                    n["publish_time"] = int(d["publish_time_ms"]) // 1000
+                uid = n.get("user_id")
+                if uid:
+                    if uid not in cache:
+                        try:
+                            u = await browser_client.user(uid, wait_ms=3500)
+                            cache[uid] = u.get("fans", "") or "0"
+                        except Exception:  # noqa: BLE001
+                            cache[uid] = "0"
+                    n["fans_count"] = cache[uid]
+            else:
+                n = await get_feed_detail(n)
+                n = await get_user_profile(n, cache)
         except Exception:  # noqa: BLE001 单条失败不影响整体
             continue
     return notes
@@ -592,7 +615,7 @@ async def collect_start(req: SearchReq):
             )
             items = res["items"]
             state["collected"] = len(items)
-            items = await _enrich_notes(items)
+            items = await _enrich_notes(items, fast=req.fast)
             saved, total, top = _persist_notes(req.keyword, items)
             if res.get("stopped"):
                 state["status"] = "stopped"
