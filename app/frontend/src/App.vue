@@ -8,7 +8,7 @@ import WorkArea from './components/WorkArea.vue'
 import CardMenu from './components/CardMenu.vue'
 import PublishPage from './components/PublishPage.vue'
 import LoginModal from './components/LoginModal.vue'
-import { apiLoginStatus, apiRefreshCookieFromChrome, apiCleanupImages } from './api'
+import { apiLoginStatus, apiRefreshCookieFromChrome, apiCleanupImages, apiNotes } from './api'
 
 const publishRef = ref<InstanceType<typeof PublishPage> | null>(null)
 
@@ -120,6 +120,20 @@ onMounted(async () => {
   // （此前会自动加载上次结果并跳转筛选阶段，与「重新进入应为白屏」的规则冲突，已移除）
   // 启动时清理无引用本地图片（与后端 startup 双保险，防旧图堆积；fire-and-forget 不阻塞）
   apiCleanupImages().catch(() => {})
+  // 显式 ?stage=pick 调试入口：不改变默认白屏规则，仅当 URL 显式带参时进入列表视图（UI 自动化/演示用）
+  const urlStage = new URLSearchParams(location.search).get('stage')
+  if (urlStage === 'pick') {
+    try {
+      const r = await apiNotes()
+      if (r.total > 0) {
+        appState.notes = r.notes
+        appState.total = r.total
+        appState.count = r.total
+        appState.status = '展示中'
+        setStage('pick')
+      }
+    } catch { /* 列表加载失败：保持白屏 */ }
+  }
 })
 </script>
 

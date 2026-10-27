@@ -704,6 +704,41 @@ def notes(keyword: str = "", order: str = "score", tag: str = ""):
     return {"total": len(out), "notes": out}
 
 
+# ================= 作者价值聚合（P2：帮用户识别值得模仿的博主） =================
+@app.get("/api/authors")
+def authors():
+    """从当前采集集按作者聚合：低粉爆款数越多、均分越高 → 越值得模仿。
+
+    authors 列表字段：user_id / nickname / avatar / fans_count / note_count /
+    hot_count（低粉爆款🔥篇数）/ low_count（低粉及低粉爆款篇数）/ avg_score /
+    max_score / total_liked / last_publish。
+    """
+    con = _db()
+    rows = con.execute(
+        """
+        SELECT
+          n.user_id,
+          (SELECT nickname FROM notes n2 WHERE n2.user_id = n.user_id ORDER BY score DESC LIMIT 1) AS nickname,
+          (SELECT avatar   FROM notes n2 WHERE n2.user_id = n.user_id ORDER BY score DESC LIMIT 1) AS avatar,
+          MAX(n.fans_count) AS fans_count,
+          COUNT(*) AS note_count,
+          COALESCE(SUM(CASE WHEN n.tag = '低粉爆款🔥' THEN 1 ELSE 0 END), 0) AS hot_count,
+          COALESCE(SUM(CASE WHEN n.tag LIKE '低粉%' THEN 1 ELSE 0 END), 0) AS low_count,
+          ROUND(AVG(n.score), 1) AS avg_score,
+          MAX(n.score) AS max_score,
+          COALESCE(SUM(n.liked_count), 0) AS total_liked,
+          MAX(n.publish_time) AS last_publish
+        FROM notes n
+        WHERE n.user_id IS NOT NULL AND n.user_id != ''
+        GROUP BY n.user_id
+        ORDER BY hot_count DESC, avg_score DESC, note_count DESC
+        """
+    ).fetchall()
+    out = [dict(r) for r in rows]
+    total_notes = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+    return {"total": len(out), "total_notes": total_notes, "authors": out}
+
+
 # ================= 下载图片包（P3） =================
 class DownloadImgsReq(BaseModel):
     feed_ids: list[str]

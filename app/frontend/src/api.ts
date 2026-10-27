@@ -1,4 +1,4 @@
-import type { ClonePayload, LoginStatus, LogItem, Note, SearchParams, SearchResult } from './types'
+import type { Author, ClonePayload, LoginStatus, LogItem, Note, SearchParams, SearchResult } from './types'
 
 const BASE = ''
 
@@ -63,6 +63,10 @@ export async function apiNotes(keyword = '', order = 'score'): Promise<{ total: 
   if (keyword) q.set('keyword', keyword)
   if (order) q.set('order', order)
   return j(await fetch(`${BASE}/api/notes?${q.toString()}`))
+}
+
+export async function apiAuthors(): Promise<{ total: number; total_notes: number; authors: Author[] }> {
+  return j(await fetch(`${BASE}/api/authors`))
 }
 
 export async function apiClone(feedId: string): Promise<ClonePayload> {

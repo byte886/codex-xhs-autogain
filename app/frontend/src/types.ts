@@ -64,6 +64,21 @@ export interface SearchResult {
   note?: string
 }
 
+/** 作者价值聚合（P2）：当前采集集按作者统计，识别值得模仿的博主 */
+export interface Author {
+  user_id: string
+  nickname: string
+  avatar: string
+  fans_count: number
+  note_count: number
+  hot_count: number
+  low_count: number
+  avg_score: number
+  max_score: number
+  total_liked: number
+  last_publish: number | null
+}
+
 export interface ClonePayload {
   feed_id: string
   title: string
