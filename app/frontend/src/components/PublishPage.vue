@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { appState, coverProxy, setStage, toast } from '../store'
-import { apiClone, apiPublish, apiSaveDraft, apiUploadImage } from '../api'
+import { apiClone, apiPublish, apiSaveDraft, apiUploadImage, apiDrafts, apiDraftDelete } from '../api'
+import type { DraftItem } from '../api'
 import type { Note } from '../types'
 
 const emit = defineEmits<{ (e: 'back'): void }>()
@@ -12,8 +13,48 @@ const tags = ref('')
 const visible = ref('公开可见')
 const account = ref('')
 const images = ref<string[]>([])
+const feedId = ref('')
 const publishing = ref(false)
 const loading = ref(false)
+
+// 草稿库（简约版：列表 / 恢复续编 / 删除）
+const drafts = ref<DraftItem[]>([])
+const draftPanelOpen = ref(false)
+const draftLoading = ref(false)
+
+async function loadDrafts() {
+  draftLoading.value = true
+  try {
+    const r = await apiDrafts()
+    drafts.value = r.ok ? r.drafts : []
+  } catch {
+    drafts.value = []
+  } finally {
+    draftLoading.value = false
+  }
+}
+
+function openDraftPanel() {
+  draftPanelOpen.value = true
+  loadDrafts()
+}
+
+function restoreDraft(d: DraftItem) {
+  title.value = d.title || ''
+  body.value = d.desc || ''
+  tags.value = d.tags.join(' ')
+  visible.value = d.visibility || '公开可见'
+  images.value = [...d.images]
+  feedId.value = d.feed_id || ''
+  draftPanelOpen.value = false
+  toast('已恢复草稿，可继续编辑后发布或重新保存')
+}
+
+async function removeDraft(id: number) {
+  const r = await apiDraftDelete(id).catch(() => ({ ok: false }))
+  toast(r.ok ? '草稿已删除' : '删除失败')
+  loadDrafts()
+}
 
 const tCount = computed(() => title.value.length)
 const bCount = computed(() => body.value.length)
@@ -22,6 +63,7 @@ type CloneTarget = Note | { feed_id: string; title: string; desc: string; images
 
 async function openFor(note: CloneTarget) {
   loading.value = true
+  feedId.value = note.feed_id || ''
   try {
     if ('images' in note && note.images) {
       // 已有克隆载荷：直接填充
@@ -128,9 +170,10 @@ async function saveDraft() {
       desc: body.value,
       tags: tags.value.split(/[\s,，]+/).filter(Boolean).map(t => (t.startsWith('#') ? t : '#' + t)),
       images: images.value,
-      visible: visible.value
+      visible: visible.value,
+      feed_id: feedId.value
     })
-    toast(r.ok ? '草稿已保存（长期保留）' : `保存失败：${r.note || '未知原因'}`)
+    toast(r.ok ? r.note || '草稿已保存（长期保留）' : `保存失败：${r.note || '未知原因'}`)
   } catch (e) {
     toast(`保存失败：${(e as Error).message}`)
   }
@@ -226,9 +269,35 @@ async function publish() {
         <div class="pub-btns">
           <button class="btn-back" @click="back">返回作品列表</button>
           <button class="btn-draft" @click="saveDraft">保存草稿</button>
+          <button class="btn-draft" @click="openDraftPanel">草稿库</button>
           <button class="btn-pub" :disabled="publishing" @click="publish">{{ publishing ? '发布中…' : '发布至' }}</button>
         </div>
       </template>
+    </div>
+
+    <!-- 草稿库弹窗（简约版：列表 / 点击恢复续编 / × 删除） -->
+    <div v-if="draftPanelOpen" class="draft-overlay" @click.self="draftPanelOpen = false">
+      <div class="draft-panel">
+        <div class="draft-head">
+          <b>草稿库</b>
+          <span class="draft-close" @click="draftPanelOpen = false">×</span>
+        </div>
+        <div v-if="draftLoading" class="draft-empty">加载中…</div>
+        <div v-else-if="!drafts.length" class="draft-empty">
+          暂无草稿<br /><span class="dim">发布页编辑后点「保存草稿」即可保存（长期保留）</span>
+        </div>
+        <div v-else class="draft-list">
+          <div v-for="d in drafts" :key="d.id" class="draft-item" @click="restoreDraft(d)">
+            <img v-if="d.images[0]" class="draft-thumb" :src="coverProxy(d.images[0])" alt="" @error="($event.target as HTMLImageElement).style.display = 'none'" />
+            <span v-else class="draft-thumb draft-thumb-empty">无图</span>
+            <div class="draft-meta">
+              <div class="draft-title">{{ d.title || '（无标题）' }}</div>
+              <div class="draft-sub">{{ d.created_at?.replace('T', ' ') }} · {{ d.visibility }} · {{ d.images.length }} 图</div>
+            </div>
+            <button class="draft-del" @click.stop="removeDraft(d.id)">删除</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 图片全图预览（lightbox：点击遮罩/图关闭） -->

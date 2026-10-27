@@ -294,3 +294,45 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(255, 36, 66,
 }
 .hover-actions .ha-btn.client { background: rgba(64, 89, 219, .88); }
 .hover-actions .ha-btn.off { background: rgba(120, 120, 120, .7); cursor: not-allowed; }
+
+/* 草稿库（简约版） */
+.draft-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+}
+.draft-panel {
+  width: min(560px, 92vw); max-height: 70vh; background: #fff; border-radius: 12px;
+  display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,.2);
+}
+.draft-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid #f0f0f0; font-size: 15px;
+}
+.draft-close { cursor: pointer; font-size: 20px; color: #888; line-height: 1; }
+.draft-empty { padding: 40px 16px; text-align: center; color: #999; font-size: 14px; line-height: 1.8; }
+.draft-empty .dim { color: #bbb; font-size: 12px; }
+.draft-list { overflow-y: auto; padding: 8px; }
+.draft-item {
+  display: flex; align-items: center; gap: 12px; padding: 10px;
+  border-radius: 8px; cursor: pointer; transition: background .15s;
+}
+.draft-item:hover { background: #f7f7f8; }
+.draft-thumb {
+  width: 56px; height: 56px; border-radius: 6px; object-fit: cover; flex-shrink: 0;
+  background: #f2f2f3;
+}
+.draft-thumb-empty {
+  display: flex; align-items: center; justify-content: center;
+  color: #bbb; font-size: 12px;
+}
+.draft-meta { flex: 1; min-width: 0; }
+.draft-title {
+  font-size: 14px; color: #222; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; margin-bottom: 4px;
+}
+.draft-sub { font-size: 12px; color: #999; }
+.draft-del {
+  flex-shrink: 0; border: 1px solid #e5e5e5; background: #fff; color: #666;
+  border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer;
+}
+.draft-del:hover { color: #e0245e; border-color: #e0245e; }

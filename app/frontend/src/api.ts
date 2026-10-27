@@ -94,6 +94,7 @@ export async function apiSaveDraft(payload: {
   tags: string[]
   images: string[]
   visible: string
+  feed_id?: string
 }): Promise<{ ok: boolean; note?: string; [k: string]: unknown }> {
   return j(await fetch(`${BASE}/api/save_draft`, {
     method: 'POST',
@@ -145,4 +146,27 @@ export async function apiUploadImage(file: File): Promise<{ ok: boolean; path?: 
   const fd = new FormData()
   fd.append('file', file)
   return j(await fetch(`${BASE}/api/upload_image`, { method: 'POST', body: fd }))
+}
+
+export interface DraftItem {
+  id: number
+  feed_id: string
+  title: string
+  desc: string
+  tags: string[]
+  visibility: string
+  images: string[]
+  created_at: string
+}
+
+export async function apiDrafts(): Promise<{ ok: boolean; total: number; drafts: DraftItem[] }> {
+  return j(await fetch(`${BASE}/api/drafts`))
+}
+
+export async function apiDraftDelete(id: number): Promise<{ ok: boolean; note?: string }> {
+  return j(await fetch(`${BASE}/api/draft_delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  }))
 }
