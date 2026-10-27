@@ -208,13 +208,8 @@ class CdpSetupReq(BaseModel):
 
 
 def _platform_setup_script() -> Path | None:
-    """生产环境平台脚本：按系统选择带参数启动 Chrome 的配置脚本（减少用户配置难度）。"""
-    scripts = Path(__file__).resolve().parents[3] / "app" / "scripts"
-    name = "setup_chrome_mac.py" if sys.platform == "darwin" else (
-        "setup_chrome_win.py" if os.name == "nt" else None)
-    if name is None:
-        return None
-    p = scripts / name
+    """生产环境脚本：单脚本跨平台（内部按系统分流），带参数启动 Chrome 并打开配置页。"""
+    p = Path(__file__).resolve().parents[3] / "app" / "scripts" / "setup_chrome.py"
     return p if p.exists() else None
 
 
