@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { appState, setStage } from '../store'
-import type { Note, Author } from '../types'
-import { apiAuthors } from '../api'
+import type { Note, Author, ClientUser } from '../types'
+import { apiAuthors, apiClientsList } from '../api'
 import CardGrid from './CardGrid.vue'
 
 const emit = defineEmits<{
@@ -12,10 +12,12 @@ const emit = defineEmits<{
 }>()
 
 const filterText = ref('')
-// P2 作者价值聚合视图：笔记 / 作者榜 切换
-const view = ref<'notes' | 'authors'>('notes')
+// P2 作者价值聚合 + P4 客户库：笔记 / 作者榜 / 客户库 视图切换
+const view = ref<'notes' | 'authors' | 'clients'>('notes')
 const authors = ref<Author[]>([])
 const authorsLoaded = ref(false)
+const clients = ref<ClientUser[]>([])
+const clientsLoaded = ref(false)
 
 function fmtTime(s: number) {
   const m = Math.floor(s / 60)
@@ -61,6 +63,23 @@ function showNotes() {
 function pickAuthor(a: Author) {
   view.value = 'notes'
   filterText.value = a.nickname || a.user_id
+}
+
+async function showClients() {
+  view.value = 'clients'
+  if (!clientsLoaded.value) {
+    try {
+      const res = await apiClientsList()
+      clients.value = res.clients || []
+      clientsLoaded.value = true
+    } catch {
+      clients.value = []
+    }
+  }
+}
+
+function openProfile(p: string | null) {
+  if (p) window.open(p, '_blank')
 }
 </script>
 
@@ -111,6 +130,7 @@ function pickAuthor(a: Author) {
         <div class="view-switch">
           <button class="vs-btn" :class="{ on: view === 'notes' }" @click="showNotes">笔记 {{ appState.notes.length }}</button>
           <button class="vs-btn" :class="{ on: view === 'authors' }" @click="showAuthors">作者榜</button>
+          <button class="vs-btn" :class="{ on: view === 'clients' }" @click="showClients">客户库</button>
         </div>
         <input v-model="filterText" placeholder="请选标题,作者或UID" style="flex:1;min-width:0" />
       </div>
@@ -139,6 +159,26 @@ function pickAuthor(a: Author) {
             <div class="au-stat"><span class="k">最新</span><b class="small">{{ fmtPub(a.last_publish) }}</b></div>
           </div>
           <div class="au-foot">点击查看该作者全部笔记 →</div>
+        </div>
+      </div>
+
+      <!-- 客户库（P4）：已采集互动用户按互动足迹聚合，足迹多 = 更活跃更有价值 -->
+      <div v-else-if="view === 'clients'" class="author-grid">
+        <div v-if="!clients.length" class="empty" style="padding:40px 0">
+          <div class="big">暂无客户</div>
+          <p>在卡片上点「采集客户」抓取笔记评论区的互动用户，会在这里按互动足迹聚合</p>
+        </div>
+        <div v-for="c in clients" :key="c.uid" class="author-card">
+          <div class="au-top">
+            <div class="au-avatar au-ph">{{ (c.nickname || '客')[0] }}</div>
+            <div class="au-name">
+              <div class="au-nick">{{ c.nickname || '未知用户' }}</div>
+              <div class="au-sub">足迹 {{ c.comment_count }} 次 · 关联 {{ c.note_count }} 篇笔记</div>
+            </div>
+            <a v-if="c.profile" :href="c.profile" target="_blank" class="au-hot" @click.stop>主页 ↗</a>
+          </div>
+          <div class="au-cmt">“{{ (c.sample_comment || '—').slice(0, 60) }}”</div>
+          <div class="au-foot">{{ c.created_at ? '采集于 ' + c.created_at.slice(0, 10) : '' }}</div>
         </div>
       </div>
 
@@ -266,5 +306,14 @@ function pickAuthor(a: Author) {
   font-size: 12px;
   color: #b08a4d;
   text-align: right;
+}
+.au-cmt {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--ink-2, #666);
+  background: var(--bg-2, #f7f7f8);
+  border-radius: 8px;
+  padding: 8px 10px;
+  line-height: 1.5;
 }
 </style>

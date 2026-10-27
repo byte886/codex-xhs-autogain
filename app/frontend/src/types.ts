@@ -79,6 +79,17 @@ export interface Author {
   last_publish: number | null
 }
 
+/** 客户库（P4）：已采集的笔记互动用户，按互动足迹聚合 */
+export interface ClientUser {
+  uid: string
+  nickname: string
+  comment_count: number
+  note_count: number
+  sample_comment: string
+  profile: string
+  created_at: string
+}
+
 export interface ClonePayload {
   feed_id: string
   title: string

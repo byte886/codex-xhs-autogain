@@ -926,6 +926,29 @@ async def collect_clients(req: ClientsReq):
     return {"total": len(users), "new": added, "users": users}
 
 
+# ================= 客户库（P4 价值视图）：已采集互动用户按足迹聚合 =================
+@app.get("/api/clients_list")
+def clients_list(feed_id: str = ""):
+    """查询客户库：按用户聚合互动足迹（评论次数多 + 关联笔记多 = 更活跃、更有价值）。
+
+    可选 feed_id 只看某笔记的互动用户；默认返回全部（按评论次数 desc）。"""
+    con = _db()
+    sql = (
+        "SELECT uid, MAX(nickname) AS nickname, COUNT(*) AS comment_count, "
+        "COUNT(DISTINCT feed_id) AS note_count, "
+        "(SELECT comment FROM clients c2 WHERE c2.uid = clients.uid ORDER BY created_at DESC LIMIT 1) AS sample_comment, "
+        "MAX(profile) AS profile, MAX(created_at) AS created_at "
+        "FROM clients"
+    )
+    params = []
+    if feed_id:
+        sql += " WHERE feed_id = ?"
+        params.append(feed_id)
+    sql += " GROUP BY uid ORDER BY comment_count DESC, note_count DESC LIMIT 200"
+    rows = con.execute(sql, params).fetchall()
+    return {"total": len(rows), "clients": [dict(r) for r in rows]}
+
+
 # ================= Cookie（显示 / 一键从 Chrome 导入） =================
 _COOKIE_ORDER = ["web_session", "last_web_session", "a1", "webId", "gid", "id_token", "acw_tc", "websectiga"]
 

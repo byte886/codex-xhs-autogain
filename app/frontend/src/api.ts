@@ -1,4 +1,4 @@
-import type { Author, ClonePayload, LoginStatus, LogItem, Note, SearchParams, SearchResult } from './types'
+import type { Author, ClientUser, ClonePayload, LoginStatus, LogItem, Note, SearchParams, SearchResult } from './types'
 
 const BASE = ''
 
@@ -67,6 +67,11 @@ export async function apiNotes(keyword = '', order = 'score'): Promise<{ total: 
 
 export async function apiAuthors(): Promise<{ total: number; total_notes: number; authors: Author[] }> {
   return j(await fetch(`${BASE}/api/authors`))
+}
+
+export async function apiClientsList(feedId = ''): Promise<{ total: number; clients: ClientUser[] }> {
+  const q = feedId ? `?feed_id=${encodeURIComponent(feedId)}` : ''
+  return j(await fetch(`${BASE}/api/clients_list${q}`))
 }
 
 export async function apiClone(feedId: string): Promise<ClonePayload> {

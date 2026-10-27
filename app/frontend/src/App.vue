@@ -130,9 +130,9 @@ onMounted(async () => {
         appState.total = r.total
         appState.count = r.total
         appState.status = '展示中'
-        setStage('pick')
       }
-    } catch { /* 列表加载失败：保持白屏 */ }
+    } catch { /* 列表加载失败：仍进入 pick 空态 */ }
+    setStage('pick')
   }
 })
 </script>
