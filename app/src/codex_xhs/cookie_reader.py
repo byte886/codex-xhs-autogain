@@ -32,7 +32,14 @@ class ChromeCookieReadError(Exception):
 # ---------------------------------------------------------------- 平台路径
 
 def _chrome_user_data_dir() -> str:
-    """Chrome 用户数据目录（所有 profile 的父目录）。"""
+    """Chrome 用户数据目录（所有 profile 的父目录）。
+
+    支持 XHS_CHROME_USER_DATA_DIR 覆盖（统一独立 profile 浏览器场景：登录态来源与
+    采集浏览器同为 .codex-xhs-profile，读同一个 Chrome Cookie 库 + 钥匙串解密）。
+    """
+    override = os.environ.get("XHS_CHROME_USER_DATA_DIR")
+    if override:
+        return os.path.expanduser(override)
     if platform.system() == "Darwin":
         return os.path.expanduser("~/Library/Application Support/Google/Chrome")
     if platform.system() == "Windows":

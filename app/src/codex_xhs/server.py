@@ -16,6 +16,7 @@ API:
 import datetime
 import io
 import json
+import os
 import random
 import sqlite3
 import time
@@ -517,6 +518,12 @@ async def refresh_cookie_from_chrome():
     """
     from codex_xhs import browser_client, cookie_reader
 
+    # 统一独立 profile 浏览器架构：登录态来源 = 采集浏览器自身（.codex-xhs-profile）。
+    # 读取其 Chrome Cookie 库（钥匙串解密，跨平台无 CDP 依赖），扫码登录落盘即闭环。
+    profile_dir = os.environ.get("XHS_PROFILE_DIR") or os.path.join(
+        os.path.expanduser("~"), ".codex-xhs-profile"
+    )
+    os.environ["XHS_CHROME_USER_DATA_DIR"] = profile_dir
     try:
         chrome_cookies = cookie_reader.read_chrome_cookies()
     except cookie_reader.ChromeCookieReadError as e:

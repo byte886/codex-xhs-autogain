@@ -136,10 +136,12 @@ async def _connect_profile():
     except Exception:
         chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
         os.makedirs(profile_dir, exist_ok=True)
+        # 窗口策略：生产默认 --start-minimized（后台隐形，Dock 一个图标）；
+        # XHS_PROFILE_WINDOW=normal 时正常显示（演示/用户扫码需要看到窗口）。
+        win_args = [] if os.environ.get("XHS_PROFILE_WINDOW") == "normal" else ["--start-minimized"]
         subprocess.Popen(
             [chrome, f"--user-data-dir={profile_dir}", f"--remote-debugging-port={port}",
-             "--no-first-run", "--no-default-browser-check", "--new-window",
-             "--start-minimized"],  # 采集浏览器后台化：窗口最小化，避免与日常 Chrome 并存造成混乱
+             "--no-first-run", "--no-default-browser-check", "--new-window", *win_args],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         for _ in range(30):
