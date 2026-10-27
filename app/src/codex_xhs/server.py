@@ -50,14 +50,23 @@ app = FastAPI(title="Codex 自动获客 · 本地工具")
 
 @app.on_event("startup")
 async def _startup_cleanup():
-    """启动时清理残留任务 tab：上次异常中断（进程被杀）可能遗留小红书搜索页标签，
-    不清会一直挂在 Chrome 里，用户刷新 APP 时看到「搜索页打开又关闭」。best-effort 不阻塞启动。
-    """
+    """启动时清理：残留任务 tab + 无引用本地图片。best-effort 不阻塞启动。"""
     try:
         from codex_xhs import browser_client
         await asyncio.wait_for(browser_client.cleanup_tabs(), timeout=15)
     except Exception:  # noqa: BLE001
         pass
+    try:
+        _cleanup_orphan_images()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@app.post("/api/cleanup_images")
+def cleanup_images():
+    """前端启动时触发：清理无引用本地图片（与后端 startup 双保险）。"""
+    removed = _cleanup_orphan_images()
+    return {"ok": True, "removed": removed}
 
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -262,26 +271,36 @@ def _rank_and_insert(con, n: dict, keyword: str, now: str) -> bool:
         return False
 
 
-def _download_cover(n: dict) -> None:
-    """下载单条封面到本地（已有则跳过；带平台 Referer/UA）。"""
-    if not n.get("cover_url"):
-        return
-    cf = IMAGES_DIR / _img_name(n["feed_id"])
-    if cf.exists():
-        return
+def _cleanup_orphan_images() -> int:
+    """清理无引用本地图片：当前 notes 批次（feed_id 前缀）保留，其余残留删除。返回删除数。
+
+    背景：封面图下载链路已废弃（前端封面走 cover_url 网络直连，local_cover 从未写入），
+    采集/克隆的旧图会无限堆积——启动时（后端 startup + 前端启动请求）双保险清理。"""
     try:
-        reqh = urllib.request.Request(
-            n["cover_url"],
-            headers={"Referer": "https://www.xiaohongshu.com/", "User-Agent": "Mozilla/5.0"},
-        )
-        with urllib.request.urlopen(reqh, timeout=10) as resp:
-            cf.write_bytes(resp.read())
+        con = _db()
+        ids = {r[0].replace("#", "_") for r in con.execute("SELECT feed_id FROM notes").fetchall()}
+        con.close()
     except Exception:  # noqa: BLE001
-        pass
+        ids = set()
+    if not IMAGES_DIR.exists():
+        return 0
+    removed = 0
+    for f in IMAGES_DIR.iterdir():
+        if not f.is_file():
+            continue
+        feed_id = f.name.split("_", 1)[0] if "_" in f.name else f.stem
+        if feed_id in ids:
+            continue
+        try:
+            f.unlink()
+            removed += 1
+        except OSError:  # noqa: BLE001
+            pass
+    return removed
 
 
 def _persist_notes(keyword: str, notes: list) -> tuple:
-    """搜索/采集结果落库：新结果替换旧批次（用完即失效）+ 本地评分 + 封面下载。
+    """搜索/采集结果落库：新结果替换旧批次（用完即失效）+ 本地评分。
     返回 (added, total, top)。"""
     con = _db()
     con.execute("DELETE FROM notes")
@@ -292,9 +311,6 @@ def _persist_notes(keyword: str, notes: list) -> tuple:
         if _rank_and_insert(con, n, keyword, now):
             saved += 1
     con.commit()
-
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        list(ex.map(_download_cover, notes))
 
     top = con.execute(
         "SELECT feed_id, title, nickname, liked_count, fans_count, score, tag, cover_url "

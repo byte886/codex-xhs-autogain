@@ -134,3 +134,8 @@ export async function apiCookieInfo(): Promise<{ ok: boolean; count: number; sav
 export async function apiQrcode(): Promise<{ ok: boolean; guide?: string; url?: string; expires_in?: number; error?: string }> {
   return j(await fetch(`${BASE}/api/qrcode`))
 }
+
+/** 启动时清理无引用本地图片（与后端 startup 双保险，防旧图堆积） */
+export async function apiCleanupImages(): Promise<{ ok: boolean; removed: number }> {
+  return j(await fetch(`${BASE}/api/cleanup_images`, { method: 'POST' }))
+}

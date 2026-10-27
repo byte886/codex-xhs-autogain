@@ -8,7 +8,7 @@ import WorkArea from './components/WorkArea.vue'
 import CardMenu from './components/CardMenu.vue'
 import PublishPage from './components/PublishPage.vue'
 import LoginModal from './components/LoginModal.vue'
-import { apiLoginStatus, apiRefreshCookieFromChrome } from './api'
+import { apiLoginStatus, apiRefreshCookieFromChrome, apiCleanupImages } from './api'
 
 const publishRef = ref<InstanceType<typeof PublishPage> | null>(null)
 
@@ -118,6 +118,8 @@ onMounted(async () => {
   }
   // 搜索结果用完即失效：启动时不加载历史 notes（每次进入保持空白，仅当次采集后展示）
   // （此前会自动加载上次结果并跳转筛选阶段，与「重新进入应为白屏」的规则冲突，已移除）
+  // 启动时清理无引用本地图片（与后端 startup 双保险，防旧图堆积；fire-and-forget 不阻塞）
+  apiCleanupImages().catch(() => {})
 })
 </script>
 
