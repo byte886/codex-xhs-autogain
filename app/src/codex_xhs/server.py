@@ -17,6 +17,7 @@ import datetime
 import io
 import json
 import os
+import subprocess
 import sys
 import random
 import sqlite3
@@ -206,6 +207,17 @@ class CdpSetupReq(BaseModel):
     profile_dir: str = ""  # 用户自定义 Profile 路径（持久化）
 
 
+def _platform_setup_script() -> Path | None:
+    """生产环境平台脚本：按系统选择带参数启动 Chrome 的配置脚本（减少用户配置难度）。"""
+    scripts = Path(__file__).resolve().parents[3] / "app" / "scripts"
+    name = "setup_chrome_mac.py" if sys.platform == "darwin" else (
+        "setup_chrome_win.py" if os.name == "nt" else None)
+    if name is None:
+        return None
+    p = scripts / name
+    return p if p.exists() else None
+
+
 @app.get("/api/cdp_status")
 async def cdp_status():
     """CDP 自动化状态：Chrome 是否安装/运行、调试端口是否就绪、路径（默认/用户自定义）。"""
@@ -280,16 +292,28 @@ async def cdp_setup(req: CdpSetupReq):
         if not req.restart:
             return {
                 "ok": False, "need_restart": True,
-                "note": "Chrome 已在运行但未开启远程调试，请退出 Chrome 后再次点击「一键配置」，或先在打开的 chrome://inspect 页面开启远程调试",
+                "note": "Chrome 已在运行但未开启远程调试，请退出 Chrome 后再次点击「一键配置」，或先点「打开远程调试设置」开启开关",
             }
         browser_client.quit_chrome()
         await asyncio.sleep(2)
-    browser_client.launch_profile_chrome()
+    # 生产环境：调平台脚本带参数启动 Chrome 并打开配置页（用户只需在弹窗点「允许」）
+    script = _platform_setup_script()
+    if script is not None:
+        r = subprocess.run([sys.executable, str(script), str(port), profile_dir],
+                           capture_output=True, text=True, timeout=20)
+        out = (r.stdout or "").strip()
+        if out == "CHROME_NOT_FOUND":
+            return {"ok": False, "note": "未找到 Chrome，请检查 Chrome 路径设置"}
+        if out == "CHROME_RUNNING":
+            return {"ok": False, "need_restart": True,
+                    "note": "Chrome 正在运行，请退出后重试，或点「打开远程调试设置」开启开关"}
+    else:
+        browser_client.launch_profile_chrome()
     for _ in range(30):
         await asyncio.sleep(1)
         if await _probe_cdp(port):
             return {"ok": True, "status": "ready", "note": "CDP 已配置完成（Chrome 已带调试参数启动，独立 profile）"}
-    return {"ok": False, "note": "Chrome 已拉起但调试端口未就绪，请稍后重试或检查 Chrome 是否被系统拦截"}
+    return {"ok": False, "note": "Chrome 已启动但调试端口未就绪，请在弹出的 Chrome 页面点「允许」后点「刷新状态」"}
 
 
 @app.post("/api/cdp_open_inspect")

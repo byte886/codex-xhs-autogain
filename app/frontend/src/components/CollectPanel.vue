@@ -301,16 +301,18 @@ onMounted(async () => {
           <input v-model="cdpProfileDir" placeholder="~/.codex-xhs-profile" spellcheck="false" />
         </div>
         <div class="cdp-actions">
-          <button class="c-btn" :disabled="cdpBusy" @click="doSaveCdpConfig">保存路径配置</button>
+          <button class="c-btn c-btn-primary" :disabled="cdpBusy" @click="doCdpSetup()">
+            {{ cdpBusy ? '配置中…' : '一键配置 CDP' }}
+          </button>
           <button class="c-btn" :disabled="cdpBusy" @click="doOpenInspect">打开远程调试设置（引导）</button>
-          <button class="c-btn" :disabled="cdpBusy" @click="doCdpSetup(true)" title="Chrome 未运行或低于 144 时，自动以调试参数拉起独立 Profile">
+          <button class="c-btn" :disabled="cdpBusy" @click="doCdpSetup(true)" title="Chrome 已运行未开调试时，自动退出后以调试参数重启">
             自动重启并配置
           </button>
           <button class="c-btn" @click="refreshCdpStatus">刷新状态</button>
         </div>
         <p class="cdp-hint">
-          推荐引导方式：点「打开远程调试设置」→ 在 Chrome 页面开启「Allow remote debugging」→ 返回本页「刷新状态」。
-          自动重启为备选（Chrome 未运行或低于 144 时使用，会以调试参数拉起独立 Profile）。
+          点「一键配置 CDP」：Chrome 未运行时自动带参数启动并打开配置页，在弹出的 Chrome 里点「允许」即可（Chrome 已运行则先退出再点，或改用引导方式）。
+          「打开远程调试设置」为引导备用（Chrome 144+ 免参数开关）。
         </p>
       </div>
     </section>
@@ -411,6 +413,8 @@ onMounted(async () => {
 .cdp-sub { display: block; color: #888; font-size: 11px; margin-top: 2px; word-break: break-all; }
 .cdp-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .cdp-actions .c-btn { font-size: 12px; }
+.cdp-actions .c-btn-primary { background: #ff2442; border-color: #ff2442; color: #fff; }
+.cdp-actions .c-btn-primary:disabled { opacity: 0.6; }
 .cdp-hint { font-size: 11px; color: #999; margin-top: 8px; line-height: 1.6; }
 .cdp-field { margin-bottom: 8px; }
 .cdp-field label { display: block; font-size: 12px; color: #555; margin-bottom: 3px; }

@@ -151,23 +151,56 @@ def save_cdp_config(chrome_path: str = "", profile_dir: str = "") -> dict:
 
 
 def chrome_executable() -> str | None:
-    """跨平台定位 Google Chrome 可执行文件：用户自定义优先，其次系统默认路径。"""
+    """跨平台定位 Google Chrome 可执行文件：用户自定义优先，其次按平台最佳实践探测。
+
+    macOS：/Applications 默认 + ~/Applications 用户级安装。
+    Windows：注册表 App Paths（HKCU→HKLM→WOW6432Node，即运行对话框使用的权威路径）
+    → 卸载注册表 → 常见安装路径（%LOCALAPPDATA% / Program Files / Program Files (x86)）。
+    """
     user_path = _load_cdp_config().get("chrome_path")
     if user_path and os.path.exists(user_path):
         return user_path
     if sys.platform == "darwin":
-        p = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        return p if os.path.exists(p) else None
-    if os.name == "nt":
         candidates = [
-            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            str(pathlib.Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
         ]
         for p in candidates:
+            if os.path.exists(p):
+                return p
+        return None
+    if os.name == "nt":
+        for p in _win_chrome_candidates():
             if p and os.path.exists(p):
                 return p
     return None
+
+
+def _win_chrome_candidates() -> list[str]:
+    """Windows Chrome 定位候选（最佳实践顺序）：注册表 → 常见安装路径。"""
+    paths: list[str] = []
+    try:
+        import winreg
+        for hive, sub in [
+            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
+        ]:
+            try:
+                with winreg.OpenKey(hive, sub) as k:
+                    val, _ = winreg.QueryValueEx(k, "")
+                    if val:
+                        paths.append(str(val))
+            except OSError:  # noqa: PERF203
+                continue
+    except ImportError:
+        pass
+    paths += [
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    ]
+    return paths
 
 
 def _profile_settings() -> tuple[int, str]:
