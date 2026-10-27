@@ -8,7 +8,7 @@ import WorkArea from './components/WorkArea.vue'
 import CardMenu from './components/CardMenu.vue'
 import PublishPage from './components/PublishPage.vue'
 import LoginModal from './components/LoginModal.vue'
-import { apiLoginStatus, apiNotes } from './api'
+import { apiLoginStatus, apiNotes, apiRefreshCookieFromChrome } from './api'
 
 const publishRef = ref<InstanceType<typeof PublishPage> | null>(null)
 
@@ -93,11 +93,29 @@ function fmtTime(s: number) {
   return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`
 }
 
-// 启动时恢复上次采集结果：DB 已有笔记则直接进入「选择内容」（刷新/重开不丢现场，也不触发新搜索）
+// 启动/刷新时自动检测登录态（生产 profile 模式：独立 Chrome 自动拉起+自动注入，无 CDP 授权弹窗代价）。
+// 未登录 → 自动尝试方案 A（读日常 Chrome Cookie + 钥匙串解密 + 校验落盘）：
+//   成功 → 登录态恢复、弹窗不出现；失败 → 弹登录引导（含登录链接 + 刷新自动恢复提示）。
+// 用户在小红书完成登录后切回本页刷新，即重走本链路完成恢复。
 onMounted(async () => {
-  // 生产 profile 模式（独立 Chrome 自动拉起+自动注入，无 CDP 授权弹窗代价）下，启动即自动检测登录态：
-  // 失效则弹窗引导「一键读取 Chrome 登录态 / 扫码」，恢复完整「失效→提醒→恢复」闭环
-  checkLogin()
+  let lg: any = null
+  try { lg = await apiLoginStatus() } catch { lg = null }
+  const loggedIn = !!(lg && lg.logged_in)
+  appState.login = { logged_in: loggedIn, nickname: (lg && lg.nickname) || '' }
+  if (!loggedIn) {
+    try {
+      const r = await apiRefreshCookieFromChrome()
+      if (r && r.ok) {
+        appState.login = { logged_in: true, nickname: r.account || '已登录' }
+        appState.cookieRefreshTick += 1
+        toast(r.note || '已自动从 Chrome 恢复登录态')
+      } else if (!appState.collecting) {
+        loginOpen.value = true
+      }
+    } catch {
+      if (!appState.collecting) loginOpen.value = true
+    }
+  }
   try {
     const r = await apiNotes('', 'score')
     if (r.notes && r.notes.length) {

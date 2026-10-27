@@ -1,16 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { apiLoginStatus, apiQrcode, apiRefreshCookieFromChrome } from '../api'
+import { ref } from 'vue'
+import { apiRefreshCookieFromChrome } from '../api'
 import { appState, toast } from '../store'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
-
-const loading = ref(false)
-const checking = ref(false)
-const guide = ref('')
-const guideOk = ref(false)
-const qrError = ref('')
 
 const autoReading = ref(false)
 const autoMsg = ref('')
@@ -44,48 +38,11 @@ function retryAutoRead() {
   autoReadChrome()
 }
 
-async function openXhs() {
-  loading.value = true
-  qrError.value = ''
-  try {
-    const r = await apiQrcode()
-    if (r.ok) {
-      guideOk.value = true
-      guide.value = r.guide || '已在新窗口打开小红书首页（https://www.xiaohongshu.com）。请完成扫码登录'
-    } else {
-      guideOk.value = false
-      qrError.value = r.error || '打开失败'
-    }
-  } catch (e) {
-    qrError.value = (e as Error).message
-  } finally {
-    loading.value = false
-  }
+// 打开小红书首页登录页：用系统默认浏览器（日常 Chrome）新窗口打开，登录后 Cookie 落在日常 Chrome，
+// 用户切回 APP 刷新时由「刷新自动读取」链路（方案 A：读日常 Chrome + 钥匙串解密）恢复。
+function openLoginPage() {
+  window.open('https://www.xiaohongshu.com/', '_blank', 'noopener')
 }
-
-// 手动确认检测：不自动轮询、不主动触发 Chrome CDP 连接（避免反复弹「远程调试授权」窗）。
-// 用户扫码完成后点「我已扫码」，才发起一次登录态检测。
-async function checkLogin() {
-  if (checking.value) return
-  checking.value = true
-  try {
-    const lg = await apiLoginStatus()
-    if (lg.logged_in) {
-      appState.login = { logged_in: true, nickname: lg.nickname || '' }
-      appState.cookieRefreshTick += 1 // 通知 Cookie 区刷新（Chrome 内登录后 cookie 已更新）
-      toast('登录成功，已恢复小红书登录态')
-      emit('close')
-    } else {
-      toast('仍未检测到登录态，请确认已扫码成功')
-    }
-  } catch (e) {
-    toast('检测失败：' + ((e as Error).message || '后端不可达'))
-  } finally {
-    checking.value = false
-  }
-}
-
-onMounted(openXhs)
 </script>
 
 <template>
@@ -93,56 +50,45 @@ onMounted(openXhs)
     <div class="modal qr-modal">
       <h3>登录小红书</h3>
       <p class="qr-tip">
-        小红书登录态已失效（未检测到有效 Cookie）。可一键读取本机 Chrome 的登录态恢复；
-        或在新打开的页面中完成登录。
+        未检测到有效登录态（Cookie 缺失或已失效）。请点击下方链接打开小红书首页完成登录；
+        登录完成后切回本页并刷新，系统将自动读取 Chrome 登录态恢复。
       </p>
+      <div class="login-row">
+        <button class="btn login-link" @click="openLoginPage">
+          <span class="link-icon">↗</span> 打开小红书登录页
+        </button>
+        <p class="login-sub">点击后会在浏览器新窗口打开小红书首页（https://www.xiaohongshu.com）。<br />
+          <strong>请务必使用 Chrome 浏览器（默认个人资料 Profile）完成登录，并始终保持同一个 Profile</strong>，否则本工具无法自动读取到登录态。</p>
+      </div>
       <div class="auto-row">
         <button class="btn auto-btn" @click="autoReadChrome" :disabled="autoReading">
-          {{ autoReading ? '正在读取…' : '一键读取 Chrome 登录态' }}
+          {{ autoReading ? '正在读取…' : '立即读取 Chrome 登录态' }}
         </button>
         <button v-if="autoMsg && autoMsg.includes('重试')" class="btn auto-retry" @click="retryAutoRead">我已授权，重试</button>
         <p v-if="autoMsg" class="auto-msg">{{ autoMsg }}</p>
       </div>
-      <div class="qr-stage">
-        <div v-if="loading" class="qr-loading">正在打开小红书登录页（新窗口）…</div>
-        <div v-else-if="guideOk" class="qr-guide">
-          <p class="guide-main">{{ guide }}</p>
-          <p class="guide-sub">请在刚打开的新页面中完成登录；完成后回到本页点击下方按钮重新检测。检测通过后本弹窗将自动关闭，Cookie 即生效。</p>
-          <button class="btn check-btn" @click="checkLogin" :disabled="checking">
-            {{ checking ? '检测中…' : '我已登录，重新检测' }}
-          </button>
-        </div>
-        <div v-else class="qr-error">
-          <p>{{ qrError }}</p>
-          <button class="btn" @click="openXhs">重试打开</button>
-        </div>
-      </div>
-      <div class="qr-meta">
-        <span v-if="guideOk">登录页已打开（新窗口）</span>
-        <span v-else>&nbsp;</span>
-        <button class="btn" @click="openXhs" :disabled="loading">重新打开登录页</button>
-      </div>
+      <p class="refresh-hint">已在小红书完成登录？<strong>刷新本页面</strong>即可自动恢复（也可点上方按钮立即读取）。</p>
       <button class="close" @click="emit('close')">关闭</button>
     </div>
   </div>
 </template>
 
 <style scoped>
-.qr-modal { width: 380px; text-align: center; }
+.qr-modal { width: 400px; text-align: center; }
 .qr-tip { font-size: 13px; color: #666; line-height: 1.6; margin: 8px 0 12px; }
-.auto-row { margin: 0 0 10px; }
-.auto-btn { min-width: 200px; }
+.login-row { margin: 0 0 12px; }
+.login-link {
+  min-width: 220px; padding: 10px 18px; font-size: 14px;
+  background: #ff2442; color: #fff; border-radius: 8px; cursor: pointer; border: none;
+}
+.login-link:hover { background: #e01e3a; }
+.link-icon { margin-right: 4px; }
+.login-sub { font-size: 12px; color: #999; line-height: 1.6; margin-top: 8px; }
+.login-sub strong { color: #c0392b; }
+.auto-row { margin: 0 0 8px; }
+.auto-btn { min-width: 220px; }
 .auto-retry { margin-top: 8px; }
 .auto-msg { font-size: 12px; color: #c0392b; line-height: 1.5; margin-top: 8px; padding: 0 8px; }
-.qr-stage {
-  min-height: 200px; display: flex; align-items: center; justify-content: center;
-  background: #fff; border: 1px solid #eee; border-radius: 8px; overflow: hidden;
-  padding: 16px;
-}
-.qr-guide .guide-main { font-size: 14px; color: #333; line-height: 1.6; }
-.qr-guide .guide-sub { font-size: 12px; color: #999; margin-top: 8px; }
-.qr-loading, .qr-error { color: #999; font-size: 13px; }
-.qr-error .btn { margin-top: 10px; }
-.check-btn { margin-top: 14px; min-width: 120px; }
-.qr-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 12px; color: #888; }
+.refresh-hint { font-size: 12px; color: #888; line-height: 1.5; margin-top: 6px; }
+.refresh-hint strong { color: #ff2442; }
 </style>
