@@ -41,16 +41,47 @@ function xhsExtractNoteDetail(root = document) {
   const descEl = root.querySelector('#detail-desc, .desc, .note-text');
   const authorEl = root.querySelector('.author-wrapper .name, .user-name, .author .name');
   const dateEl = root.querySelector('#date, .date, .publish-time');
-  // 视频判断：主笔记为视频时页面有播放器 video/播放容器（用于二次修正 note_type）
-  const videoEl = root.querySelector('video, [class*="video-player"], [class*="player"]');
+  // 正文容器（主图/视频判断的作用域；评论区、相关推荐、头像均不在此容器内）
+  const contentRoot = root.querySelector(
+    '#detail-container, .note-content, .note-container, [class*="note-content"], [class*="note-container"], [class*="detail-container"]'
+  );
+  // 视频判断（收紧）：只认正文容器内的 video/播放器，或 SEO og:video 元数据。
+  // 绝不使用全文档 [class*="player"] —— 相关推荐流里的视频卡片 class 也含 player，会把图文笔记误判成视频（用户实测 bug）。
+  const videoEl = (contentRoot ? contentRoot.querySelector('video, [class*="video-player"]') : null)
+    || root.querySelector('video[src], video source[src], meta[property="og:video"], meta[name="og:video"]');
   // 主图：小红书笔记正文轮播图。官方主图 class 为 note-slider-img（社区爬虫实证：所有笔记图
-  // 均含此属性，评论区图/头像/推荐区不含，天然隔离）；.swiper-wrapper/.swiper-slide 兜底新版结构。
-  // 再加域名过滤（仅 sns-webpic/sns-img/sns-preview）+ 排除头像/静态资源/logo/二维码/svg。
-  const imgs = [...root.querySelectorAll('img.note-slider-img, .swiper-wrapper img, .swiper-slide img')]
+  // 均含此属性，评论区图/头像/推荐区不含，天然隔离）。仅当主图区为空时，才在正文容器内
+  // 兜底找 .swiper-wrapper/.swiper-slide 图（避免抓到评论区/推荐区的轮播图）。
+  // URL 规范化去重：小红书同一张图可能带不同 imageView2 参数/时间戳 → 去掉 query/hash 后视为同一张，
+  // 解决"两张一模一样"的重复图问题。
+  const IMG_HOST = /sns-webpic|sns-img|sns-preview/i;
+  const IMG_EXCLUDE = /avatar|fe-static|formula-static|logo|qrcode|svg/i;
+  const norm = (u) => {
+    try {
+      const p = new URL(u);
+      p.search = '';
+      p.hash = '';
+      return p.href.replace(/\/$/, '');
+    } catch {
+      return (u || '').split('?')[0].replace(/\/$/, '');
+    }
+  };
+  let imgNodes = [...root.querySelectorAll('img.note-slider-img')];
+  if (!imgNodes.length) {
+    const scope = contentRoot || root;
+    imgNodes = [...scope.querySelectorAll('.swiper-wrapper img, .swiper-slide img')];
+  }
+  const seen = new Set();
+  const imgs = imgNodes
     .map((i) => i.src || i.getAttribute('data-src') || null)
-    .filter((u) => u && /sns-webpic|sns-img|sns-preview/i.test(u))                       // 仅笔记图床域名
-    .filter((u) => !/avatar|fe-static|formula-static|logo|qrcode|svg/i.test(u))          // 排除页面装饰图
-    .filter((u, i, arr) => arr.indexOf(u) === i)                                         // 去重
+    .filter((u) => u && IMG_HOST.test(u))                 // 仅笔记图床域名
+    .filter((u) => !IMG_EXCLUDE.test(u))                 // 排除头像/静态资源/logo/二维码/svg
+    .filter((u) => {
+      const k = norm(u);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
     .slice(0, 9);
   // 互动数据：SSR 注入的 window.__INITIAL_STATE__.note.noteDetailMap[noteId].note
   // 含 interactInfo{likedCount/collectedCount/commentCount/shareCount} + time(毫秒) + user.userId，
