@@ -438,6 +438,50 @@ async def _wait_note_cards(page, timeout_s: float = 45) -> bool:
     return False
 
 
+async def _prepare_search_page(keyword: str):
+    """打开搜索页并等卡片渲染；新版 AI 搜索页（无 note-item）回退旧版 URL。返回可用 page。"""
+    url = _XHS + "/search_result?keyword=" + _urlencode(keyword) + "&source=web_search_result_notes"
+    page = await _load(url, 2500)
+    appeared = await _wait_note_cards(page, timeout_s=45)
+    if not appeared:
+        # AI 搜索页（无 section.note-item）→ 回退无 source 的旧版搜索
+        await page.close()
+        page = await _load(_XHS + "/search_result?keyword=" + _urlencode(keyword), 2500)
+        await _wait_note_cards(page, timeout_s=45)
+    return page
+
+
+async def _drain_page(page, items: list, seen: set) -> int:
+    """提取当前页可见卡片并入 items（广告卡过滤 + 去重）。返回新增条数。"""
+    got = await page.evaluate("() => xhsExtractSearchNotes()")
+    added = 0
+    for it in got:
+        k = it.get("feed_id") or it.get("id")
+        # 过滤推广/广告卡片：真实笔记 id 是 24 位 hex（推广位是 UUID 等其他格式）
+        if not re.fullmatch(r"[0-9a-f]{24}", str(k or "")):
+            continue
+        if k not in seen:
+            seen.add(k)
+            items.append(it)
+            added += 1
+    return added
+
+
+def _should_stop_collect(count: int, limit: int, stale: int, added: int, should_stop) -> tuple[bool, int]:
+    """滚动采集终止判定：采满 / 用户停止 / 页面不再增长（stale≥2 且有结果）。返回 (是否停止, 新 stale)。"""
+    if count >= limit:
+        return True, stale
+    if should_stop and should_stop():
+        return True, stale
+    if added == 0:
+        stale += 1
+        if stale >= 2 and count > 0:
+            return True, stale
+    else:
+        stale = 0
+    return False, stale
+
+
 async def search(keyword: str, limit: int = 30, on_progress=None, should_stop=None) -> dict:
     """任务式采集：滚动平台搜索页逐批提取，支持去重合并、进度回调与中途停止。
 
@@ -445,45 +489,19 @@ async def search(keyword: str, limit: int = 30, on_progress=None, should_stop=No
     - should_stop()：返回 True 时提前收尾（用户点「停止采集」）
     - 总时长上限 120s：平台 AI 搜索页渲染慢时的兜底，超时返回已采集部分
     """
-    url = _XHS + "/search_result?keyword=" + _urlencode(keyword) + "&source=web_search_result_notes"
-    page = await _load(url, 2500)
+    page = await _prepare_search_page(keyword)
+    items: list = []
+    seen: set = set()
+    stale = 0
+    deadline = time.time() + 120
     try:
-        # 等首屏卡片渲染（SPA 慢渲染）：最多 ~45s；不见卡片多半是新版 AI 搜索页
-        appeared = await _wait_note_cards(page, timeout_s=45)
-        if not appeared:
-            # AI 搜索页（无 section.note-item）→ 回退无 source 的旧版搜索
-            await page.close()
-            url = _XHS + "/search_result?keyword=" + _urlencode(keyword)
-            page = await _load(url, 2500)
-            appeared = await _wait_note_cards(page, timeout_s=45)
-        items = []
-        seen = set()
-        stale = 0
-        deadline = time.time() + 120
         while time.time() < deadline:
-            got = await page.evaluate("() => xhsExtractSearchNotes()")
-            added = 0
-            for it in got:
-                k = it.get("feed_id") or it.get("id")
-                # 过滤推广/广告卡片：真实笔记 id 是 24 位 hex（推广位是 UUID 等其他格式）
-                if not re.fullmatch(r"[0-9a-f]{24}", str(k or "")):
-                    continue
-                if k not in seen:
-                    seen.add(k)
-                    items.append(it)
-                    added += 1
+            added = await _drain_page(page, items, seen)
             if on_progress:
                 on_progress(len(items))
-            if len(items) >= limit:
+            done, stale = _should_stop_collect(len(items), limit, stale, added, should_stop)
+            if done:
                 break
-            if should_stop and should_stop():
-                break
-            if added == 0:
-                stale += 1
-                if stale >= 2 and len(items) > 0:
-                    break  # 页面不再增长：收尾返回现有结果
-            else:
-                stale = 0
             await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
             await asyncio.sleep(1.8)
         stopped = bool(should_stop and should_stop())

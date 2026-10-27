@@ -123,6 +123,25 @@ def _init_tables(con):
 _LOGIN_CACHE = {"t": 0.0, "data": None}
 _LOGIN_CACHE_TTL = 30.0
 
+def _read_cookie_status(p: Path) -> tuple[bool, str, bool]:
+    """读本地 cookies.json 判定登录态：返回 (logged_in, web_session 摘要, expires 是否有效)。
+
+    expires=None 是会话级 Cookie（浏览器会话内一直有效，Chrome 导出不携带过期时间）
+    → 视为有效；有 expires 且在未来才有效。"""
+    logged_in = False
+    ws = ""
+    exp_ok = True
+    if p.exists():
+        data = json.loads(p.read_text(encoding="utf8"))
+        cookies = data.get("cookies", [])
+        ws = next((c.get("value", "") for c in cookies if c.get("name") == "web_session"), "")
+        now_ts = int(time.time())
+        exps = [c.get("expires") for c in cookies if c.get("name") == "web_session"]
+        exp_ok = (not exps) or any(e is None or (e or 0) >= now_ts for e in exps)
+        logged_in = bool(ws) and exp_ok
+    return logged_in, ws, exp_ok
+
+
 @app.get("/api/login_status")
 async def login_status():
     """登录态检测（轻量版）：只读本地已保存 cookies.json——存在且含未过期的 web_session 即视为已登录。
@@ -137,20 +156,7 @@ async def login_status():
         return _LOGIN_CACHE["data"]
 
     try:
-        p = BASE / "data" / "cookies.json"
-        logged_in = False
-        ws = ""
-        exp_ok = True
-        if p.exists():
-            data = json.loads(p.read_text(encoding="utf8"))
-            cookies = data.get("cookies", [])
-            ws = next((c.get("value", "") for c in cookies if c.get("name") == "web_session"), "")
-            now_ts = int(time.time())
-            exps = [c.get("expires") for c in cookies if c.get("name") == "web_session"]
-            # expires=None 是会话级 Cookie（浏览器会话内一直有效，Chrome 导出不携带过期时间）
-            # → 视为有效；有 expires 且在未来才有效
-            exp_ok = (not exps) or any(e is None or (e or 0) >= now_ts for e in exps)
-            logged_in = bool(ws) and exp_ok
+        logged_in, ws, exp_ok = _read_cookie_status(BASE / "data" / "cookies.json")
         result = {
             "status": "logged_in" if logged_in else "not_logged_in",
             "logged_in": logged_in,

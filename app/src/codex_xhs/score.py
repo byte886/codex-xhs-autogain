@@ -80,6 +80,49 @@ def _days_since(publish_time: int | None, now: datetime | None = None) -> float:
     return (now - ts).total_seconds() / 86400.0
 
 
+def _ratio_score(liked: int, fans: int, hot_ratio: float) -> tuple[float, float]:
+    """维度 1：点赞粉丝比（40 分封顶）。返回 (得分, 原始比值)。"""
+    fan_ratio = liked / fans if fans > 0 else (liked if liked > 0 else 0.0)
+    return min(40.0, 40.0 * fan_ratio / hot_ratio), fan_ratio
+
+
+def _low_fan_score(fans: int, low_fan: int) -> float:
+    """维度 2：低粉权重（25 分：粉丝越少越高；500 粉丝以上线性衰减，5000 归零）。"""
+    if fans == 0:
+        return 0.0
+    if fans < low_fan:
+        return 25.0
+    return max(0.0, 25.0 * (1 - (fans - low_fan) / 4500))
+
+
+def _health_score(liked: int, collected: int, commented: int, shared: int) -> float:
+    """维度 3：互动健康度（20 分：藏+评+转 相对点赞的活跃度；无赞不计分）。"""
+    extra = collected + commented + shared
+    if liked > 0 and extra > 0:
+        return min(20.0, 20.0 * extra / liked)
+    return 0.0
+
+
+def _fresh_score(days: float, fresh_days: int) -> float:
+    """维度 4：时效性（15 分：30 天内满分，之后线性衰减，90 天归零）。"""
+    if days <= fresh_days:
+        return 15.0
+    return max(0.0, 15.0 * (1 - (days - fresh_days) / 60))
+
+
+def _pick_tag(liked: int, fan_ratio: float, fans: int, t: dict) -> str:
+    """分级标签（生财实战口径，优先级从高到低）。"""
+    if liked <= t["low_like"]:
+        return TAGS["low_like"]
+    if liked > t["hot_like"] and fan_ratio > t["hot_ratio"]:
+        return TAGS["low_fan_hit"]
+    if fans < t["low_fan"]:
+        return TAGS["low_fan"]
+    if liked > t["hot_like"]:
+        return TAGS["high_like"]
+    return TAGS["normal"]
+
+
 def score_note(
     note: dict,
     weights: dict | None = None,
@@ -103,46 +146,13 @@ def score_note(
     fans = _to_int(note.get("fans_count"))
     publish_time = note.get("publish_time")
 
-    # 1) 点赞粉丝比（40 分封顶）
-    fan_ratio = liked / fans if fans > 0 else (liked if liked > 0 else 0.0)
-    ratio_score = min(40.0, 40.0 * fan_ratio / t["hot_ratio"])
-
-    # 2) 低粉权重（25 分：粉丝越少越高）
-    if fans == 0:
-        low_fan_score = 0.0
-    elif fans < t["low_fan"]:
-        low_fan_score = 25.0
-    else:
-        # 500 粉丝以上线性衰减到 0（5000 粉丝归零）
-        low_fan_score = max(0.0, 25.0 * (1 - (fans - t["low_fan"]) / 4500))
-
-    # 3) 互动健康度（20 分：藏+评+转 相对点赞的活跃度；无赞不计分）
-    extra = collected + commented + shared
-    health = (
-        min(20.0, 20.0 * extra / liked)
-        if (liked > 0 and extra > 0)
-        else 0.0
-    )
-
-    # 4) 时效性（15 分：30 天内满分，之后线性衰减，90 天归零）
-    days = _days_since(publish_time, now)
-    if days <= t["fresh_days"]:
-        fresh_score = 15.0
-    else:
-        fresh_score = max(0.0, 15.0 * (1 - (days - t["fresh_days"]) / 60))
+    ratio_score, fan_ratio = _ratio_score(liked, fans, t["hot_ratio"])
+    low_fan_score = _low_fan_score(fans, t["low_fan"])
+    health = _health_score(liked, collected, commented, shared)
+    fresh_score = _fresh_score(_days_since(publish_time, now), t["fresh_days"])
 
     total = round(ratio_score + low_fan_score + health + fresh_score, 1)
-
-    # 分级标签（生财实战口径，优先级从高到低）
-    tag = TAGS["normal"]
-    if liked <= t["low_like"]:
-        tag = TAGS["low_like"]
-    elif liked > t["hot_like"] and fan_ratio > t["hot_ratio"]:
-        tag = TAGS["low_fan_hit"]
-    elif fans < t["low_fan"]:
-        tag = TAGS["low_fan"]
-    elif liked > t["hot_like"]:
-        tag = TAGS["high_like"]
+    tag = _pick_tag(liked, fan_ratio, fans, t)
 
     return {
         "score": total,
