@@ -20,11 +20,19 @@ export async function apiLoginStatus(): Promise<LoginStatus> {
 
 export async function apiSearch(p: SearchParams): Promise<SearchResult> {
   const body = { keyword: p.keyword, limit: p.limit, sort: p.sort, note_type: p.noteType, interval: p.interval }
-  return j(await fetch(`${BASE}/api/search`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  }))
+  // 90s 超时：平台 AI 搜索页渲染偶发慢/卡，超时后前端自动恢复按钮并提示，避免无限"搜索中"
+  const ctl = new AbortController()
+  const timer = setTimeout(() => ctl.abort(), 90000)
+  try {
+    return await j(await fetch(`${BASE}/api/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ctl.signal
+    }))
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export async function apiNotes(keyword = '', order = 'score'): Promise<{ total: number; notes: Note[] }> {

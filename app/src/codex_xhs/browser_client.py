@@ -421,13 +421,24 @@ async def search(keyword: str, limit: int = 30) -> dict:
     url = _XHS + "/search_result?keyword=" + _urlencode(keyword) + "&source=web_search_result_notes"
     page = await _load(url, 2500)
     try:
+        # AI 搜索页渲染慢：总时长上限 60s（避免平台页面加载异常时无限空转），
+        # 提取数有增长才继续滚动；连续 2 轮无增长且已有结果即收尾。
         items = []
-        for _ in range(12):
-            items = await page.evaluate("() => xhsExtractSearchNotes()")
-            if len(items) >= limit:
-                break
+        last = -1
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            got = await page.evaluate("() => xhsExtractSearchNotes()")
+            if len(got) > len(items):
+                items = got
+                last = -1
+                if len(items) >= limit:
+                    break
+            else:
+                last += 1
+                if last >= 2 and len(items) > 0:
+                    break  # 已停止增长：收尾返回现有结果
             await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
-            await asyncio.sleep(2.5)
+            await asyncio.sleep(1.8)
         return {"keyword": keyword, "count": len(items[:limit]), "items": items[:limit]}
     finally:
         await page.close()

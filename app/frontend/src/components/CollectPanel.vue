@@ -46,12 +46,7 @@ const sortOptions = ['综合', '最新', '最热']
 const typeOptions = ['全部', '图文', '视频']
 
 async function doSearch() {
-  if (appState.collecting) {
-    // 停止
-    appState.collecting = false
-    appState.status = '已停止'
-    return
-  }
+  if (appState.collecting) return // 搜索中防重复触发（淘宝式：点了等结果，无"停止"概念）
   appState.collecting = true
   appState.status = '搜索中'
   appState.selected = {}
@@ -177,8 +172,9 @@ onMounted(async () => {
             <input v-model.number="appState.params.interval" type="number" min="300" step="100" />
           </div>
         </div>
-        <button class="btn-search" :class="{ stop: appState.collecting }" @click="doSearch">
-          {{ appState.collecting ? '停止搜索' : '开始搜索' }}
+        <button class="btn-search" :class="{ stop: appState.collecting }" :disabled="appState.collecting" @click="doSearch">
+          <span v-if="appState.collecting" class="btn-spinner" />
+          {{ appState.collecting ? '搜索中…' : '开始搜索' }}
         </button>
       </div>
     </section>
@@ -251,4 +247,23 @@ onMounted(async () => {
 }
 .cookie-status.ok { color: #16a34a; background: #f0fdf4; border-color: #bbf7d0; }
 .cookie-status.err { color: #c0392b; background: #fef2f2; border-color: #fecaca; }
+/* 搜索中按钮：转圈 + 禁用（淘宝式：点了等结果，无"停止"） */
+.btn-search:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+.btn-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: btn-spin 0.8s linear infinite;
+  vertical-align: -1px;
+}
+@keyframes btn-spin {
+  to { transform: rotate(360deg); }
+}
 </style>
