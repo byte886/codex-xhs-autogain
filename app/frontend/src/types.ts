@@ -30,6 +30,18 @@ export interface Note {
   local_images?: string[]
   /** 后端返回：本地代理封面（/app/images/...），空则用 cover_url */
   local_cover?: string
+  /** 评分明细（4 维度得分），供分数可解释展示 */
+  score_info?: {
+    score: number
+    tag: string
+    fan_ratio: number
+    dimensions: {
+      like_fan_ratio: number
+      low_fan: number
+      interaction_health: number
+      freshness: number
+    }
+  }
 }
 
 export interface SearchParams {

@@ -116,6 +116,11 @@ def _init_tables(con):
             PRIMARY KEY (uid, feed_id)
         )
     """)
+    # 评分明细（score_info JSON：4 维度得分，卡片右上角分数可解释）；老库补列
+    try:
+        con.execute("ALTER TABLE notes ADD COLUMN score_info TEXT")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
     # 存草稿（长期保留资产；区别于搜索/采集结果——用完即失效）
     con.execute("""
         CREATE TABLE IF NOT EXISTS drafts (
@@ -469,9 +474,11 @@ def _rank_and_insert(con, n: dict, keyword: str, now: str) -> bool:
         try:
             si = rank_notes([n])[0]["score_info"]
         except Exception:  # noqa: BLE001
-            si = {"score": 0.0, "tag": "评分失败", "fan_ratio": 0.0}
+            si = {"score": 0.0, "tag": "评分失败", "fan_ratio": 0.0,
+                  "dimensions": {"like_fan_ratio": 0.0, "low_fan": 0.0,
+                                 "interaction_health": 0.0, "freshness": 0.0}}
         con.execute(
-            "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 n.get("feed_id"), keyword, n.get("title", ""), n.get("type", ""),
                 n.get("user_id"), n.get("nickname", ""), n.get("avatar", ""),
@@ -480,7 +487,8 @@ def _rank_and_insert(con, n: dict, keyword: str, now: str) -> bool:
                 int(n.get("liked_count") or 0), int(n.get("collected_count") or 0),
                 int(n.get("comment_count") or 0), int(n.get("shared_count") or 0),
                 int(n.get("fans_count") or 0), n.get("publish_time"),
-                si["score"], si["tag"], si["fan_ratio"], now,
+                si["score"], si["tag"], si["fan_ratio"],
+                json.dumps(si, ensure_ascii=False), now,
             ),
         )
         return True
@@ -631,6 +639,23 @@ def notes(keyword: str = "", order: str = "score", tag: str = ""):
     out = []
     for r in rows:
         d = dict(r)
+        # 评分明细：优先读库（新采集含 score_info JSON）；老数据无列值则用现有字段重算兜底
+        si = None
+        raw = d.get("score_info")
+        if raw:
+            try:
+                si = json.loads(raw)
+            except Exception:  # noqa: BLE001
+                si = None
+        if not si:
+            try:
+                si = rank_notes([d])[0]["score_info"]
+            except Exception:  # noqa: BLE001
+                si = None
+        if si:
+            d["score_info"] = si
+        else:
+            d.pop("score_info", None)
         # 本地封面存在则替换为本地代理路径（xhscdn 防盗链，直连会 403）
         cf = IMAGES_DIR / _img_name(d["feed_id"])
         d["local_cover"] = f"/app/images/{_img_name(d['feed_id'])}" if cf.exists() else ""
