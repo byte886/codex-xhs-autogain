@@ -167,6 +167,37 @@ async def _page():
     return await ctx.new_page()
 
 
+async def cleanup_tabs():
+    """清理 9223 生产 Chrome 中与任务无关的标签页：保留第 1 个，其余全部关闭，保留页归位 about:blank。
+
+    使用场景：测试/演示前后、以及长时间运行后定期执行，避免反复 _page() 建后台页造成 tab 堆积。
+    对生产会话安全：只关多余页面、不动浏览器本身；连接复用 get_browser() 现有连接。
+    """
+    try:
+        browser = await get_browser()
+        ctx = browser.contexts[0]
+        pages = ctx.pages
+        if len(pages) <= 1:
+            return 0
+        keep = pages[0]
+        closed = 0
+        for p in pages[1:]:
+            try:
+                await p.close()
+                closed += 1
+            except Exception:  # noqa: BLE001
+                continue
+        try:
+            if keep.url != "about:blank":
+                await keep.goto("about:blank")
+        except Exception:  # noqa: BLE001
+            pass
+        return closed
+    except Exception as exc:  # noqa: BLE001
+        print(f"[cleanup_tabs] 清理失败（非阻断）: {exc}")
+        return 0
+
+
 async def _load(url: str, wait_ms: int = 5000):
     page = await _page()
     try:
