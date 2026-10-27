@@ -125,8 +125,36 @@ async def _inject_saved_cookies():
         return False
 
 
+_CDP_CONFIG = _ROOT / "data" / "cdp_config.json"
+
+
+def _load_cdp_config() -> dict:
+    """读取用户自定义的 Chrome 路径 / Profile 路径配置（无则空）。"""
+    try:
+        if _CDP_CONFIG.exists():
+            return json.loads(_CDP_CONFIG.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        pass
+    return {}
+
+
+def save_cdp_config(chrome_path: str = "", profile_dir: str = "") -> dict:
+    """保存用户自定义 Chrome 路径 / Profile 路径（持久化，跨会话保留）。"""
+    cfg = _load_cdp_config()
+    if chrome_path:
+        cfg["chrome_path"] = chrome_path
+    if profile_dir:
+        cfg["profile_dir"] = profile_dir
+    _CDP_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    _CDP_CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    return cfg
+
+
 def chrome_executable() -> str | None:
-    """跨平台定位 Google Chrome 可执行文件（macOS / Windows）。找不到返回 None。"""
+    """跨平台定位 Google Chrome 可执行文件：用户自定义优先，其次系统默认路径。"""
+    user_path = _load_cdp_config().get("chrome_path")
+    if user_path and os.path.exists(user_path):
+        return user_path
     if sys.platform == "darwin":
         p = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
         return p if os.path.exists(p) else None
@@ -143,9 +171,14 @@ def chrome_executable() -> str | None:
 
 
 def _profile_settings() -> tuple[int, str]:
-    """CDP 端口与独立 profile 目录（交付模式：不污染用户日常登录态）。"""
+    """CDP 端口与独立 profile 目录（交付模式：不污染用户日常登录态）。
+
+    用户可在前端 CDP 面板自定义 Profile 路径（持久化到 data/cdp_config.json），
+    优先读用户配置，其次环境变量，最后默认值（~/.codex-xhs-profile）。
+    """
     port = int(os.environ.get("XHS_PROFILE_PORT", "9223"))
-    profile_dir = os.environ.get("XHS_PROFILE_DIR") or os.path.join(
+    cfg = _load_cdp_config()
+    profile_dir = cfg.get("profile_dir") or os.environ.get("XHS_PROFILE_DIR") or os.path.join(
         os.path.expanduser("~"), ".codex-xhs-profile"
     )
     return port, profile_dir
@@ -179,7 +212,10 @@ def quit_chrome() -> bool:
 
 
 def launch_profile_chrome() -> str | None:
-    """自动拉起带调试参数的独立 profile Chrome。返回 Chrome 可执行路径（找不到返回 None）。"""
+    """自动拉起带调试参数的独立 profile Chrome。返回 Chrome 可执行路径（找不到返回 None）。
+
+    备选方案（启动参数方式）：主推 Chrome 144+ 的 chrome://inspect 远程调试开关（无需参数），
+    本函数仅在引导失败 / Chrome <144 时兜底。"""
     chrome = chrome_executable()
     if not chrome:
         return None
@@ -191,6 +227,17 @@ def launch_profile_chrome() -> str | None:
          "--no-first-run", "--no-default-browser-check", "--new-window", *win_args],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
+    return chrome
+
+
+def open_inspect_remote_debugging() -> str | None:
+    """引导用户开启远程调试：用 Chrome 打开 chrome://inspect/#remote-debugging（Chrome 144+ 官方方式，无需启动参数）。
+
+    返回 Chrome 可执行路径（找不到返回 None）。由用户在此页面开启「Allow remote debugging」。"""
+    chrome = chrome_executable()
+    if not chrome:
+        return None
+    subprocess.Popen([chrome, "chrome://inspect/#remote-debugging"])
     return chrome
 
 

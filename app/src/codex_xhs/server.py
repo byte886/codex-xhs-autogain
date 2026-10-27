@@ -17,6 +17,7 @@ import datetime
 import io
 import json
 import os
+import sys
 import random
 import sqlite3
 import time
@@ -201,41 +202,85 @@ async def _probe_cdp(port: int) -> bool:
 
 class CdpSetupReq(BaseModel):
     restart: bool = False  # Chrome 已运行未开调试时，是否自动退出重启
+    chrome_path: str = ""  # 用户自定义 Chrome 路径（持久化）
+    profile_dir: str = ""  # 用户自定义 Profile 路径（持久化）
 
 
 @app.get("/api/cdp_status")
 async def cdp_status():
-    """CDP 自动化状态：Chrome 是否安装/运行、调试端口是否就绪、profile 路径。"""
+    """CDP 自动化状态：Chrome 是否安装/运行、调试端口是否就绪、路径（默认/用户自定义）。"""
     from codex_xhs import browser_client
     port, profile_dir = browser_client._profile_settings()
+    chrome = browser_client.chrome_executable()
+    # 就绪判定：优先用户 profile 的 DevToolsActivePort（Chrome 144+ 无参数 inspect 开关方式），其次固定端口
+    port_ready = await _probe_cdp(port)
+    dev_port = None
+    if not port_ready:
+        dev_port = _read_devtools_active_port(profile_dir)
+        if dev_port:
+            port_ready = await _probe_cdp(dev_port)
     return {
         "ok": True,
-        "port": port,
-        "port_ready": await _probe_cdp(port),
+        "port": dev_port or port,
+        "port_ready": port_ready,
         "chrome_running": browser_client.chrome_running(),
-        "chrome_found": browser_client.chrome_executable() is not None,
+        "chrome_found": chrome is not None,
+        "chrome_path": chrome or "",
         "profile_dir": profile_dir,
     }
 
 
+def _read_devtools_active_port(profile_dir: str) -> int | None:
+    """读取 Chrome 写的 DevToolsActivePort（Chrome 144+ 在 chrome://inspect 开启远程调试后生成）。
+
+    优先读独立 profile（APP 自拉），兜底读用户日常 profile（引导方式：用户在自带 Chrome 开启开关）。
+    跨平台：macOS ~/Library/Application Support/Google/Chrome；Windows %LOCALAPPDATA%\\Google\\Chrome\\User Data。
+    """
+    candidates = [profile_dir]
+    try:
+        if sys.platform == "darwin":
+            candidates.append(str(Path.home() / "Library/Application Support/Google/Chrome"))
+        elif os.name == "nt":
+            candidates.append(os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "User Data"))
+    except Exception:  # noqa: BLE001
+        pass
+    for d in candidates:
+        try:
+            p = Path(d) / "DevToolsActivePort"
+            if p.exists():
+                txt = p.read_text(encoding="utf-8").strip()
+                first = txt.splitlines()[0].strip()
+                if first.isdigit():
+                    return int(first)
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
 @app.post("/api/cdp_setup")
 async def cdp_setup(req: CdpSetupReq):
-    """一键配置 CDP（自动/半自动）：
+    """一键配置 CDP（自动/半自动，支持用户自定义 Chrome 路径 / Profile 路径）：
+    - 保存用户自定义路径（持久化）；
     - 端口已就绪 → 无需动作；
-    - Chrome 未运行 → 自动拉起（带调试参数 + 独立 profile）；
+    - Chrome 未运行 → 自动拉起（带调试参数 + 独立 profile，备选方案）；
     - Chrome 已运行但未开调试 → 返回 need_restart 提示；restart=true 时自动退出并重启。
     """
     from codex_xhs import browser_client
+    if req.chrome_path or req.profile_dir:
+        browser_client.save_cdp_config(chrome_path=req.chrome_path, profile_dir=req.profile_dir)
     port, profile_dir = browser_client._profile_settings()
     if await _probe_cdp(port):
         return {"ok": True, "status": "ready", "note": f"CDP 已就绪（端口 {port}）"}
+    dev_port = _read_devtools_active_port(profile_dir)
+    if dev_port and await _probe_cdp(dev_port):
+        return {"ok": True, "status": "ready", "note": f"CDP 已就绪（chrome://inspect 远程调试，端口 {dev_port}）"}
     if browser_client.chrome_executable() is None:
-        return {"ok": False, "note": "未找到 Chrome，请先安装 Google Chrome 后再试"}
+        return {"ok": False, "note": "未找到 Chrome，请填写 Chrome 路径或先安装 Google Chrome"}
     if browser_client.chrome_running():
         if not req.restart:
             return {
                 "ok": False, "need_restart": True,
-                "note": "Chrome 已在运行但未开启远程调试（新参数对已运行实例不生效），请退出 Chrome 后再次点击「一键配置」",
+                "note": "Chrome 已在运行但未开启远程调试，请退出 Chrome 后再次点击「一键配置」，或先在打开的 chrome://inspect 页面开启远程调试",
             }
         browser_client.quit_chrome()
         await asyncio.sleep(2)
@@ -245,6 +290,19 @@ async def cdp_setup(req: CdpSetupReq):
         if await _probe_cdp(port):
             return {"ok": True, "status": "ready", "note": "CDP 已配置完成（Chrome 已带调试参数启动，独立 profile）"}
     return {"ok": False, "note": "Chrome 已拉起但调试端口未就绪，请稍后重试或检查 Chrome 是否被系统拦截"}
+
+
+@app.post("/api/cdp_open_inspect")
+async def cdp_open_inspect():
+    """引导方式：打开 chrome://inspect/#remote-debugging（Chrome 144+ 官方免启动参数开启远程调试）。
+
+    由用户在此页面开启「Allow remote debugging」，然后返回本页点「刷新状态」。
+    """
+    from codex_xhs import browser_client
+    if browser_client.chrome_executable() is None:
+        return {"ok": False, "note": "未找到 Chrome，请填写 Chrome 路径或先安装 Google Chrome"}
+    browser_client.open_inspect_remote_debugging()
+    return {"ok": True, "note": "已打开远程调试设置页，请在 Chrome 中开启「Allow remote debugging」，完成后返回本页点「刷新状态」"}
 
 
 @app.get("/api/qrcode")

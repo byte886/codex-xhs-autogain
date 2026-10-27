@@ -177,6 +177,7 @@ export interface CdpStatus {
   port_ready: boolean
   chrome_running: boolean
   chrome_found: boolean
+  chrome_path: string
   profile_dir: string
 }
 
@@ -190,4 +191,8 @@ export async function apiCdpSetup(restart = false): Promise<{ ok: boolean; statu
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ restart }),
   }))
+}
+
+export async function apiCdpOpenInspect(): Promise<{ ok: boolean; note?: string }> {
+  return j(await fetch(`${BASE}/api/cdp_open_inspect`, { method: 'POST' }))
 }
