@@ -504,6 +504,8 @@ async def _collect_images(n: dict, feed_id: str) -> list:
             images = imgs
             if dn.get("desc"):
                 n["desc"] = dn.get("desc")
+            if dn.get("title"):
+                n["title"] = dn.get("title")
     except Exception:  # noqa: BLE001
         pass
     if not images and n.get("cover_url"):

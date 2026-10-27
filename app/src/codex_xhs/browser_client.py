@@ -363,7 +363,7 @@ async def _verify_profile(cookies: list[dict]) -> dict:
     """
     browser = await _connect_profile()
     ctx = browser.contexts[0]
-    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+    page = await ctx.new_page()  # 必须新开 tab：绝不占用/关闭用户现有 tab（含 APP 前端页）
     cdp = await ctx.new_cdp_session(page)
     try:
         # ① 清空独立浏览器全部 Cookie（隔离旧登录态）

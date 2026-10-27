@@ -40,6 +40,7 @@ async function openFor(note: CloneTarget) {
           const locals = (p.images_local || []).filter(Boolean)
           if (locals.length) images.value = locals
           else if (p.images?.length) images.value = p.images
+          if (p.title) title.value = p.title
           if (p.desc) body.value = p.desc
         })
         .catch(() => {

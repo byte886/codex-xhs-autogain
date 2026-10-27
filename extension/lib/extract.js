@@ -27,7 +27,14 @@ function xhsExtractSearchNotes(root = document) {
 
 function xhsExtractNoteDetail(root = document) {
   // 笔记详情页：标题/正文/作者/图片（仅取笔记轮播图，排除头像/缩略图/相关推荐）
-  const titleEl = root.querySelector('#detail-title, .title, h1');
+  // 标题来源优先级：og:title（SEO 元数据，实测可靠）→ #detail-title。
+  // 注意：绝不回退到 .title/h1 —— 详情页右侧"相关推荐"流里有大量 .title/h1 文本，
+  // 会抓到与笔记无关的推荐标题（实测污染源）。
+  const ogTitleEl = root.querySelector('meta[property="og:title"]');
+  const ogTitle = ogTitleEl ? (ogTitleEl.content || '').trim() : '';
+  const titleEl = root.querySelector('#detail-title');
+  const title = (ogTitle ? ogTitle.replace(/\s*-\s*(小红书)?\s*$/, '').trim() : '')
+    || (titleEl ? titleEl.innerText.trim() : '');
   const descEl = root.querySelector('#detail-desc, .desc, .note-text');
   const authorEl = root.querySelector('.author-wrapper .name, .user-name, .author .name');
   const dateEl = root.querySelector('#date, .date, .publish-time');
@@ -37,7 +44,7 @@ function xhsExtractNoteDetail(root = document) {
     .filter((u, i, arr) => arr.indexOf(u) === i)                                 // 去重
     .slice(0, 9);
   return {
-    title: titleEl ? titleEl.innerText.trim() : '',
+    title,
     desc: descEl ? descEl.innerText.trim() : '',
     author: authorEl ? authorEl.innerText.trim() : '',
     date: dateEl ? dateEl.innerText.trim() : '',
