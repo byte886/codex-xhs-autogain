@@ -538,26 +538,31 @@ _COOKIE_ORDER = ["web_session", "last_web_session", "a1", "webId", "gid", "id_to
 
 @app.get("/api/cookie_info")
 async def cookie_info():
-    """从外部 Chrome 实时读取小红书 cookie 摘要（界面「显示 Cookie」只读展示用）。
-    新架构下采集/登录都在同一个 Chrome 内完成，无跨环境搬运，故只读展示。经常驻 Playwright 连接。"""
+    """只读展示 Cookie 摘要：读本地 data/cookies.json，不连浏览器、不打开页面。
+
+    原实现每次调 browser_client.cookies() → 内部 _load(explore) 会在 Chrome 打开小红书
+    首页 tab 再关闭——APP 每次刷新都触发「小红书 tab 闪开又消失」（用户痛点）。改为纯本地读取。"""
     try:
-        from codex_xhs import browser_client
-        d = await browser_client.cookies()
-        names = d.get("names", [])
+        p = BASE / "data" / "cookies.json"
+        data = {}
+        if p.exists():
+            data = json.loads(p.read_text(encoding="utf8"))
+        cookies = data.get("cookies", []) or []
+        names = [c.get("name", "") for c in cookies]
         items = []
         for i, nm in enumerate(names):
             items.append({"name": nm, "value": "", "domain": ".xiaohongshu.com", "ord": i})
         items.sort(key=lambda x: (_COOKIE_ORDER.index(x["name"]) if x["name"] in _COOKIE_ORDER else 99, x["name"]))
-        ws = d.get("web_session") or ""
+        ws = next((c.get("value", "") for c in cookies if c.get("name") == "web_session"), "") or ""
         return {
             "ok": True,
-            "count": d.get("count", 0),
-            "saved_at": "",
+            "count": len(cookies),
+            "saved_at": data.get("saved_at", ""),
             "account": (ws[:8] + "…") if ws else "",
             "cookies": items,
         }
     except Exception as e:
-        return {"ok": False, "count": 0, "saved_at": "", "cookies": [], "error": f"本地浏览器读取失败: {str(e)[:100]}"}
+        return {"ok": False, "count": 0, "saved_at": "", "cookies": [], "error": f"本地读取失败: {str(e)[:100]}"}
 
 
 class ImportCookieReq(BaseModel):
