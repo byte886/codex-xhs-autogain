@@ -220,5 +220,5 @@ const selCount = computed(() => selectedCount())
       </div>
     </div>
   </div>
-  <div v-if="!filtered.length" style="text-align:center;color:#AAA;padding:40px 0">暂无笔记（{{ props.filterText ? '无匹配结果（标题/作者/UID）' : '先点「开始搜索」' }}）</div>
+  <div v-if="!filtered.length" style="text-align:center;color:#AAA;padding:40px 0">暂无笔记（{{ props.filterText ? '无匹配结果（标题/作者/UID）' : '先点「开始采集」' }}）</div>
 </template>

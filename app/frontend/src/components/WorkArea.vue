@@ -29,11 +29,11 @@ function cloneFromRank(n: Note) {
     <!-- 待输入 -->
     <div v-if="appState.stage === 'input'" class="empty">
       <div class="big">待输入</div>
-      <p>在左侧填写关键词并设置参数，点击「开始搜索」</p>
+      <p>在左侧填写关键词并设置参数，点击「开始采集」</p>
       <p class="sub">（视频示例："比如说关键词输入一个减肥"）</p>
     </div>
 
-    <!-- 搜索作品 -->
+    <!-- 采集作品 -->
     <div v-else-if="appState.stage === 'search'">
       <div class="info-bar">
         <div class="info-item">
@@ -44,7 +44,7 @@ function cloneFromRank(n: Note) {
         </div>
         <div class="info-item">
           <span class="k">状态</span>
-          <span class="status-pill" :class="{ running: appState.status === '搜索中', done: appState.status === '展示中' }">{{ appState.status }}</span>
+          <span class="status-pill" :class="{ running: appState.status === '采集中', done: appState.status === '展示中' }">{{ appState.status }}</span>
         </div>
         <div class="info-item">
           <span class="k">已完成</span><span class="v">{{ appState.notes.length }}</span>
