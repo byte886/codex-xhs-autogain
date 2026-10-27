@@ -138,7 +138,8 @@ async def _connect_profile():
         os.makedirs(profile_dir, exist_ok=True)
         subprocess.Popen(
             [chrome, f"--user-data-dir={profile_dir}", f"--remote-debugging-port={port}",
-             "--no-first-run", "--no-default-browser-check", "--new-window"],
+             "--no-first-run", "--no-default-browser-check", "--new-window",
+             "--start-minimized"],  # 采集浏览器后台化：窗口最小化，避免与日常 Chrome 并存造成混乱
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         for _ in range(30):
