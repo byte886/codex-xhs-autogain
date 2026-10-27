@@ -40,7 +40,7 @@ IMAGES_DIR = BASE / "data" / "images"
 
 _INTERVAL = (1.0, 1.8)
 
-from codex_xhs.score import rank_notes  # noqa: E402
+from codex_xhs.score import rank_notes, _to_int  # noqa: E402
 from codex_xhs.collect_pipeline import (  # noqa: E402
     get_feed_detail,
     get_user_profile,
@@ -452,6 +452,7 @@ async def search(req: SearchReq):
         return {"added": 0, "total": before, "top": [], "note": f"搜索未返回结果（{str(e)[:80]}），请确认 Chrome 已打开并登录小红书后重试"}
     if not notes:
         return {"added": 0, "total": before, "top": [], "note": "搜索未返回结果，请确认 Chrome 已打开并登录小红书后重试"}
+    notes = await _enrich_notes(notes)
     saved, total, top = _persist_notes(req.keyword, notes)
     return {"added": saved, "total": total, "top": top, "source": "关键词搜索（本地 Chrome）"}
 
@@ -484,9 +485,9 @@ def _rank_and_insert(con, n: dict, keyword: str, now: str) -> bool:
                 n.get("user_id"), n.get("nickname", ""), n.get("avatar", ""),
                 n.get("cover_url", ""), n.get("xsec_token", ""), n.get("desc", ""),
                 n.get("ip_location", ""),
-                int(n.get("liked_count") or 0), int(n.get("collected_count") or 0),
-                int(n.get("comment_count") or 0), int(n.get("shared_count") or 0),
-                int(n.get("fans_count") or 0), n.get("publish_time"),
+                _to_int(n.get("liked_count")), _to_int(n.get("collected_count")),
+                _to_int(n.get("comment_count")), _to_int(n.get("shared_count")),
+                _to_int(n.get("fans_count")), n.get("publish_time"),
                 si["score"], si["tag"], si["fan_ratio"],
                 json.dumps(si, ensure_ascii=False), now,
             ),
@@ -548,6 +549,22 @@ def _persist_notes(keyword: str, notes: list) -> tuple:
     return saved, total, [dict(r) for r in top]
 
 
+async def _enrich_notes(notes: list) -> list:
+    """详情补全：互动数据（赞/藏/评/转/发布时间/作者 uid）+ 作者粉丝数（按 uid 缓存）。
+
+    搜索卡片只有点赞粗值；详情页 SSR 提供全量互动与作者 uid，作者主页提供粉丝数
+    ——三者对齐后评分才不失真（低粉爆文判断的前提）。
+    """
+    cache: dict = {}
+    for n in notes:
+        try:
+            n = await get_feed_detail(n)
+            n = await get_user_profile(n, cache)
+        except Exception:  # noqa: BLE001 单条失败不影响整体
+            continue
+    return notes
+
+
 @app.post("/api/collect_start")
 async def collect_start(req: SearchReq):
     """启动采集任务：后台滚动平台搜索页逐批提取，直到满额/平台不增长/用户停止。"""
@@ -575,6 +592,7 @@ async def collect_start(req: SearchReq):
             )
             items = res["items"]
             state["collected"] = len(items)
+            items = await _enrich_notes(items)
             saved, total, top = _persist_notes(req.keyword, items)
             if res.get("stopped"):
                 state["status"] = "stopped"

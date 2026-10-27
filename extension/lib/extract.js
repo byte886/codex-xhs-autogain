@@ -29,7 +29,7 @@ function xhsExtractSearchNotes(root = document) {
 }
 
 function xhsExtractNoteDetail(root = document) {
-  // 笔记详情页：标题/正文/作者/图片（仅取笔记轮播图，排除头像/缩略图/相关推荐）
+  // 笔记详情页：标题/正文/作者/图片/互动数据
   // 标题来源优先级：og:title（SEO 元数据，实测可靠）→ #detail-title。
   // 注意：绝不回退到 .title/h1 —— 详情页右侧"相关推荐"流里有大量 .title/h1 文本，
   // 会抓到与笔记无关的推荐标题（实测污染源）。
@@ -52,6 +52,29 @@ function xhsExtractNoteDetail(root = document) {
     .filter((u) => !/avatar|fe-static|formula-static|logo|qrcode|svg/i.test(u))          // 排除页面装饰图
     .filter((u, i, arr) => arr.indexOf(u) === i)                                         // 去重
     .slice(0, 9);
+  // 互动数据：SSR 注入的 window.__INITIAL_STATE__.note.noteDetailMap[noteId].note
+  // 含 interactInfo{likedCount/collectedCount/commentCount/shareCount} + time(毫秒) + user.userId，
+  // 无需签名接口，比 DOM 抓取更可靠（新版详情页互动计数不在静态 DOM 文本中）。
+  let interact = null, pubTimeMs = null, noteId = null, authorUserId = null, authorNick = '';
+  try {
+    const st = window.__INITIAL_STATE__ || {};
+    const detailMap = (st.note && st.note.noteDetailMap) || {};
+    let cur = null;
+    const m = location.href.match(/[0-9a-f]{24}/);
+    const key = m ? m[0] : null;
+    if (key && detailMap[key]) cur = detailMap[key].note;
+    else {
+      const k = Object.keys(detailMap).find((x) => detailMap[x] && detailMap[x].note && detailMap[x].note.noteId);
+      if (k) cur = detailMap[k].note;
+    }
+    if (cur) {
+      interact = cur.interactInfo || null;
+      pubTimeMs = cur.time || null;
+      noteId = cur.noteId || null;
+      authorUserId = (cur.user && cur.user.userId) || null;
+      authorNick = (cur.user && cur.user.nickname) || '';
+    }
+  } catch (e) { /* 拿不到就走空值 */ }
   return {
     title,
     desc: descEl ? descEl.innerText.trim() : '',
@@ -59,26 +82,57 @@ function xhsExtractNoteDetail(root = document) {
     date: dateEl ? dateEl.innerText.trim() : '',
     imgs,
     type: videoEl ? 'video' : 'note',
+    note_id: noteId,
+    user_id: authorUserId,
+    author_nick: authorNick,
+    liked_count: interact && interact.likedCount != null ? String(interact.likedCount) : '',
+    collected_count: interact && interact.collectedCount != null ? String(interact.collectedCount) : '',
+    comment_count: interact && interact.commentCount != null ? String(interact.commentCount) : '',
+    shared_count: interact && interact.shareCount != null ? String(interact.shareCount) : '',
+    publish_time_ms: pubTimeMs,
   };
 }
 
 function xhsExtractUser(root = document) {
   // 用户主页：昵称/小红书号/简介/关注数/粉丝数/获赞数
-  const nickEl = root.querySelector('.user-name, .nickname, .name');
+  const nickEl = root.querySelector('.user-name, .nickname, .name, .username');
   const idEl = root.querySelector('.user-id, .red-id, .xiaohongshu-id, .user-screen-name');
   const descEl = root.querySelector('.user-desc, .desc, .introduction');
-  // 统计区：关注/粉丝/获赞与收藏（新版：.user-stats 或 .info .count 等）
-  const fansEl = root.querySelector('[class*="fans"] .count, [class*="follower"] .count, [class*="followers"] .count');
-  const followEl = root.querySelector('[class*="follow"] .count, [class*="following"] .count');
-  const likesEl = root.querySelector('[class*="like"] .count, [class*="interaction"] .count');
+  // 新版统计区（实测 2026-10）：.user-interactions > .clickable，文本形如 "5314\n粉丝"（数字在前标签在后）
+  let fans = '', following = '', likes = '';
+  const interactions = root.querySelector('.user-interactions');
+  if (interactions) {
+    for (const c of interactions.querySelectorAll('.clickable')) {
+      const t = (c.innerText || '').trim();
+      const m = t.match(/([\d.]+[万千wW]?)\s*\n?\s*(关注|粉丝|获赞与收藏)/);
+      if (!m) continue;
+      const label = m[2];
+      if (label === '关注') following = m[1];
+      else if (label === '粉丝') fans = m[1];
+      else if (label === '获赞与收藏') likes = m[1];
+    }
+  }
+  // 旧版兜底：class 直接含 fans/follower/like 的计数元素
+  if (!fans) {
+    const f = root.querySelector('[class*="fans"] .count, [class*="follower"] .count, [class*="followers"] .count');
+    if (f) fans = f.innerText.trim();
+  }
+  if (!following) {
+    const fo = root.querySelector('[class*="follow"] .count, [class*="following"] .count');
+    if (fo) following = fo.innerText.trim();
+  }
+  if (!likes) {
+    const lk = root.querySelector('[class*="like"] .count, [class*="interaction"] .count');
+    if (lk) likes = lk.innerText.trim();
+  }
   const counts = [...root.querySelectorAll('.count, .num, .stat, [class*="count"]')].map((e) => e.innerText.trim()).filter(Boolean).slice(0, 6);
   return {
     nickname: nickEl ? nickEl.innerText.trim() : '',
     userId: idEl ? idEl.innerText.trim() : '',
     desc: descEl ? descEl.innerText.trim() : '',
-    fans: fansEl ? fansEl.innerText.trim() : '',
-    following: followEl ? followEl.innerText.trim() : '',
-    likes: likesEl ? likesEl.innerText.trim() : '',
+    fans,
+    following,
+    likes,
     counts,
   };
 }

@@ -20,7 +20,7 @@ from pathlib import Path
 
 # 允许从任意 cwd 导入 score 模块
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from codex_xhs.score import rank_notes  # noqa: E402
+from codex_xhs.score import rank_notes, _to_int  # noqa: E402
 
 REQUEST_INTERVAL = (1.0, 1.8)  # 真人浏览节奏：请求间随机 1-1.8s（用户拍板合理像人档，勿再调快）
 SESSION_MAX_NOTES = 20        # 单次采集会话最多 20 条（真人一次浏览的量级，勿一次拉太多）
@@ -101,9 +101,10 @@ async def _run_browser(cmd: str, arg: str, tag: str, arg2: str = "") -> dict | N
 
 
 async def get_feed_detail(note: dict) -> dict:
-    """补全笔记详情（本地浏览器打开笔记页 DOM 提取标题/正文/作者/日期/图片）。
+    """补全笔记详情（本地浏览器打开笔记页 DOM+SSR 提取标题/正文/作者/日期/图片/互动数据）。
 
-    替代容器 get_feed_detail；无签名依赖，直接读渲染后的页面。
+    互动数据（赞/藏/评/转/发布时间/作者 uid）来自页面 SSR 注入的 __INITIAL_STATE__
+    （无需签名接口，比 DOM 抓取更可靠）。图片仍走 DOM 轮播图选择器。
     """
     d = await _run_browser("note", note.get("feed_id", ""), "NOTE", note.get("xsec_token", ""))
     if d:
@@ -119,7 +120,28 @@ async def get_feed_detail(note: dict) -> dict:
             dd = note["desc"].strip().lstrip("#").strip()
             dd = re.sub(r"\[.*?\]", "", dd).strip()
             note["title"] = dd[:20]
-        note["publish_time"] = None  # DOM 无毫秒时间戳；日期在 author 文本（如 09-22）
+        # 互动数据补全（SSR 来源，详情页比搜索卡片更全更准）
+        if d.get("liked_count"):
+            note["liked_count"] = d["liked_count"]
+        if d.get("collected_count"):
+            note["collected_count"] = d["collected_count"]
+        if d.get("comment_count"):
+            note["comment_count"] = d["comment_count"]
+        if d.get("shared_count"):
+            note["shared_count"] = d["shared_count"]
+        # 发布时间：SSR time 为毫秒时间戳 → 秒级；DOM 日期（如 09-22）无年份不做时间戳
+        ms = d.get("publish_time_ms")
+        if ms:
+            try:
+                note["publish_time"] = int(ms) // 1000
+            except (TypeError, ValueError):
+                note["publish_time"] = None
+        # 作者 uid 补全（搜索页 user_id 恒 None → 详情页 SSR 提供）：
+        # 有了 uid，get_user_profile 才能拿到粉丝数（低粉判断的前提）
+        if d.get("user_id"):
+            note["user_id"] = d["user_id"]
+        if d.get("author_nick"):
+            note["nickname"] = d["author_nick"]
         note["detail_imgs"] = d.get("imgs", [])
     time.sleep(REQUEST_INTERVAL[0] + random.random() * (REQUEST_INTERVAL[1] - REQUEST_INTERVAL[0]))
     return note
@@ -204,9 +226,9 @@ def _upsert_note(con: sqlite3.Connection, n: dict, keyword: str, now: str) -> No
             n.get("feed_id"), keyword, n.get("title", ""), n.get("type", ""),
             n.get("user_id"), n.get("nickname", ""), n.get("avatar", ""),
             n.get("cover_url", ""), n.get("xsec_token", ""), n.get("desc", ""), n.get("ip_location", ""),
-            int(n.get("liked_count") or 0), int(n.get("collected_count") or 0),
-            int(n.get("comment_count") or 0), int(n.get("shared_count") or 0),
-            int(n.get("fans_count") or 0), n.get("publish_time"),
+            _to_int(n.get("liked_count")), _to_int(n.get("collected_count")),
+            _to_int(n.get("comment_count")), _to_int(n.get("shared_count")),
+            _to_int(n.get("fans_count")), n.get("publish_time"),
             si["score"], si["tag"], si["fan_ratio"], now,
         ),
     )
