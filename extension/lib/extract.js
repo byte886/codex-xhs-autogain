@@ -14,6 +14,8 @@ function xhsExtractSearchNotes(root = document) {
     const likesEl = c.querySelector('.like-wrapper .count, .like-wrapper span, .footer [class*="like"], [class*="like"] .count');
     // 标题：新版搜索卡片独立 .title 元素；旧版 .desc/.note-desc 兜底；再兜底封面 alt
     const titleEl = c.querySelector('.title') || c.querySelector('.desc, .note-desc, [class*="desc"]');
+    // 视频标记：视频笔记卡片有播放图标（play-icon，实测可靠），图文没有 → note_type 精确区分
+    const playEl = c.querySelector('[class*="play"]');
     return {
       id,
       href: href ? (href.startsWith('/') ? 'https://www.xiaohongshu.com' + href : href) : null,
@@ -21,6 +23,7 @@ function xhsExtractSearchNotes(root = document) {
       author: authorEl ? authorEl.innerText.trim() : '',
       img: img ? (img.src || img.getAttribute('data-src')) : null,
       likes: likesEl ? likesEl.innerText.trim() : '',
+      type: playEl ? 'video' : 'note',
     };
   }).filter((x) => x.id || x.href);
 }
@@ -38,6 +41,8 @@ function xhsExtractNoteDetail(root = document) {
   const descEl = root.querySelector('#detail-desc, .desc, .note-text');
   const authorEl = root.querySelector('.author-wrapper .name, .user-name, .author .name');
   const dateEl = root.querySelector('#date, .date, .publish-time');
+  // 视频判断：主笔记为视频时页面有播放器 video/播放容器（用于二次修正 note_type）
+  const videoEl = root.querySelector('video, [class*="video-player"], [class*="player"]');
   const imgs = [...root.querySelectorAll('.swiper-slide img, #noteContainer img, .slide img, .carousel img, [class*="slide"] img')]
     .map((i) => i.src || i.getAttribute('data-src') || null)
     .filter((u) => u && /sns-webpic|sns-img|xhscdn\.com|sns-preview/i.test(u))  // 仅笔记图域名（排除头像/静态资源）
@@ -49,6 +54,7 @@ function xhsExtractNoteDetail(root = document) {
     author: authorEl ? authorEl.innerText.trim() : '',
     date: dateEl ? dateEl.innerText.trim() : '',
     imgs,
+    type: videoEl ? 'video' : 'note',
   };
 }
 

@@ -71,7 +71,7 @@ async def search_via_browser(keyword: str, limit: int = 20, on_progress=None, sh
             "feed_id": it.get("id"),
             "xsec_token": xsec,
             "title": it.get("title", ""),
-            "type": "",
+            "type": it.get("type", ""),
             "user_id": None,
             "nickname": nickname,
             "avatar": "",
@@ -109,6 +109,9 @@ async def get_feed_detail(note: dict) -> dict:
             note["title"] = d["title"]
         if d.get("desc"):
             note["desc"] = d["desc"]
+        if d.get("type"):
+            # 详情页视频判断更准：二次修正 note_type（搜索卡片 play-icon 可能漏判）
+            note["note_type"] = d["type"]
         # 无标题笔记兜底：取正文去掉话题标记后的首段前 20 字
         if not note.get("title") and note.get("desc"):
             dd = note["desc"].strip().lstrip("#").strip()
