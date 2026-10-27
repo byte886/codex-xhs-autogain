@@ -8,7 +8,7 @@ import WorkArea from './components/WorkArea.vue'
 import CardMenu from './components/CardMenu.vue'
 import PublishPage from './components/PublishPage.vue'
 import LoginModal from './components/LoginModal.vue'
-import { apiLoginStatus, apiNotes, apiRefreshCookieFromChrome } from './api'
+import { apiLoginStatus, apiRefreshCookieFromChrome } from './api'
 
 const publishRef = ref<InstanceType<typeof PublishPage> | null>(null)
 
@@ -116,14 +116,8 @@ onMounted(async () => {
       }
     } catch { /* 后台读取失败：弹窗引导保持 */ }
   }
-  try {
-    const r = await apiNotes('', 'score')
-    if (r.notes && r.notes.length) {
-      appState.notes = r.notes
-      appState.total = r.total
-      setStage('pick')
-    }
-  } catch { /* 后端未就绪静默 */ }
+  // 搜索结果用完即失效：启动时不加载历史 notes（每次进入保持空白，仅当次采集后展示）
+  // （此前会自动加载上次结果并跳转筛选阶段，与「重新进入应为白屏」的规则冲突，已移除）
 })
 </script>
 
