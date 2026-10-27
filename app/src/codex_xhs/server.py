@@ -538,7 +538,7 @@ async def _collect_images(n: dict, feed_id: str) -> list:
 
 
 def _download_image(feed_id: str, idx: int, url: str) -> str:
-    """克隆用：下载单张图到本地。返回可访问路径（失败返回空串）。"""
+    """克隆用：下载单张图到本地。返回可访问路径（失败/装饰性小图返回空串）。"""
     fname = _img_name(feed_id, suffix=f"p{idx}")
     dest = IMAGES_DIR / fname
     try:
@@ -549,6 +549,10 @@ def _download_image(feed_id: str, idx: int, url: str) -> str:
             )
             with urllib.request.urlopen(reqh, timeout=20) as resp:
                 dest.write_bytes(resp.read())
+        # 装饰性小图（头像/图标 2-4KB）兜底过滤：正文原图一般 ≥50KB，<20KB 判定为非正文图
+        if dest.exists() and dest.stat().st_size < 20 * 1024:
+            dest.unlink()
+            return ""
         return f"/app/images/{fname}"
     except Exception:  # noqa: BLE001
         return ""
