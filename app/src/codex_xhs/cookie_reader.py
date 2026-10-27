@@ -31,17 +31,65 @@ class ChromeCookieReadError(Exception):
 
 # ---------------------------------------------------------------- 平台路径
 
-def _chrome_cookie_db_path() -> str:
+def _chrome_user_data_dir() -> str:
+    """Chrome 用户数据目录（所有 profile 的父目录）。"""
     if platform.system() == "Darwin":
-        return os.path.expanduser(
-            "~/Library/Application Support/Google/Chrome/Default/Cookies"
-        )
+        return os.path.expanduser("~/Library/Application Support/Google/Chrome")
     if platform.system() == "Windows":
         return os.path.join(
             os.environ.get("LOCALAPPDATA", ""),
-            "Google", "Chrome", "User Data", "Default", "Cookies",
+            "Google", "Chrome", "User Data",
         )
     raise ChromeCookieReadError(f"不支持的平台: {platform.system()}")
+
+
+def _chrome_profile_cookie_paths() -> list[str]:
+    """列出 Chrome 全部 profile 的 Cookies 库路径（Default + Profile N）。"""
+    base = _chrome_user_data_dir()
+    profiles = ["Default"] + [f"Profile {i}" for i in range(1, 20)]
+    out = []
+    for p in profiles:
+        f = os.path.join(base, p, "Cookies")
+        if os.path.exists(f):
+            out.append(f)
+    return out
+
+
+def _pick_best_profile_db() -> str:
+    """选择「最可能正在使用」的 profile 的 Cookies 库（多 profile 场景正确读取）。
+
+    规则（实测依据：用户日常 Chrome 可能有 Default + Profile N 并存，各 profile 登录态独立）：
+    1. 优先含 xiaohongshu web_session 且创建时间最新的 profile（用户最近登录小红的那个）；
+    2. 全部 profile 均无 web_session 时，取 Cookies 文件 mtime 最新的 profile（最近活跃者）。
+    避免误读 Default 里 10 天前的旧有效 session，导致「登出后仍判定已登录」。
+    """
+    paths = _chrome_profile_cookie_paths()
+    if not paths:
+        raise ChromeCookieReadError("未找到 Chrome Cookie 库，请先安装并登录 Chrome")
+
+    best: tuple[int, str] | None = None
+    for f in paths:
+        try:
+            con = sqlite3.connect(f"file:{f}?immutable=1", uri=True)
+            try:
+                row = con.execute(
+                    "SELECT creation_utc FROM cookies "
+                    "WHERE host_key LIKE '%xiaohongshu%' AND name='web_session' "
+                    "ORDER BY creation_utc DESC LIMIT 1"
+                ).fetchone()
+            finally:
+                con.close()
+            if row and (best is None or row[0] > best[0]):
+                best = (row[0], f)
+        except Exception:  # noqa: BLE001
+            continue
+    if best:
+        return best[1]
+    return max(paths, key=os.path.getmtime)
+
+
+def _chrome_cookie_db_path() -> str:
+    return _pick_best_profile_db()
 
 
 def _chrome_local_state_path() -> str:

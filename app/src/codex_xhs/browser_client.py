@@ -249,24 +249,31 @@ async def cookies() -> dict:
 
 
 async def verify_cookies(cookies: list[dict]) -> dict:
-    """校验导入的 Cookie（生产路径预演）：注入独立 profile Chrome → 访问小红书首页判定登录态。
+    """校验导入/读取的 Cookie（生产路径预演）：在独立 profile Chrome 中【先清空已有 Cookie】→
+    只注入待校验 Cookie → 访问小红书首页判定登录态。
 
-    独立 profile（XHS_PROFILE_PORT=9223）是 APP 交付形态的专用浏览器，可随意注入 Cookie，
-    不污染用户日常 Chrome。校验通过即说明生产环境导入链路可用。"""
+    必须清空的原因：9223 是常驻浏览器，context 里可能残留此前注入的有效 Cookie；不清空直接
+    注入校验，explore 会带着旧登录态判定「已登录」，导致校验失效（实测缺陷：登出后仍误报有效）。
+    校验完成后恢复：清空 → 重新注入本地已保存的 cookies.json（若存在），维持生产登录态。
+    """
     browser = await _connect_profile()
     ctx = browser.contexts[0]
+    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+    cdp = await ctx.new_cdp_session(page)
     try:
+        # ① 清空独立浏览器全部 Cookie（隔离旧登录态）
+        await cdp.send("Network.clearBrowserCookies")
+        # ② 只注入待校验 Cookie
         try:
             await ctx.add_cookies(cookies)
         except Exception:  # CDP context 的 add_cookies 可能受限，退化为 Network.setCookies
-            cdp = await ctx.new_cdp_session(ctx.pages[0] if ctx.pages else await ctx.new_page())
             await cdp.send("Network.setCookies", {"cookies": cookies})
-        page = await ctx.new_page()
+        # ③ 打开小红书首页判定登录态
         try:
             await page.goto(_XHS + "/explore", wait_until="domcontentloaded", timeout=40000)
             await page.evaluate(_EXTRACT_SRC)
             await asyncio.sleep(5)
-            return await page.evaluate(
+            result = await page.evaluate(
                 "() => ({"
                 " logged_in: !!xhsIsLoggedIn(),"
                 " url: location.href,"
@@ -276,9 +283,23 @@ async def verify_cookies(cookies: list[dict]) -> dict:
             )
         finally:
             await page.close()
+        return result
     finally:
-        # 校验用 profile Chrome 保持运行（后续采集/登录可切换复用）；不关闭浏览器
-        pass
+        # ④ 恢复生产登录态：清空 → 重新注入本地已保存的 cookies.json（若存在）
+        try:
+            await cdp.send("Network.clearBrowserCookies")
+            ck: list = []
+            try:
+                p = _ROOT / "data" / "cookies.json"
+                if p.exists():
+                    data = json.loads(p.read_text(encoding="utf8"))
+                    ck = data.get("cookies", []) or []
+            except Exception:  # noqa: BLE001
+                ck = []
+            if ck:
+                await ctx.add_cookies(ck)
+        except Exception:  # noqa: BLE001 恢复失败不阻断校验结果
+            pass
 
 
 async def search(keyword: str, limit: int = 30) -> dict:
