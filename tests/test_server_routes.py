@@ -140,7 +140,11 @@ class TestCollect:
         async def fake_search(*a, **k):
             return result
 
+        async def fake_enrich(items, **k):
+            return items  # 纯逻辑测试：跳过真实浏览器详情补全（否则会调 CDP/网络挂起）
+
         monkeypatch.setattr(server, "search_via_browser", fake_search)
+        monkeypatch.setattr(server, "_enrich_notes", fake_enrich)
         r = client.post("/api/collect_start", json={"keyword": "k", "limit": 3})
         tid = r.json()["task_id"]
         pr = {"status": "running"}
