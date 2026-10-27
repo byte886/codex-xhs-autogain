@@ -461,13 +461,37 @@ async def clients(note_id: str, xsec_token: str = "") -> dict:
     )
     page = await _load(url, 6000)
     try:
-        # 评论区懒加载：滚动到评论区触发渲染 + 等待
+        # 评论区懒加载：滚动到精确容器 .interaction-container（旧 [class*=comment] 已失效）触发渲染
         for _ in range(3):
             await page.evaluate("""() => {
-              const cs = document.querySelectorAll('[class*="comment"]');
-              if (cs.length) cs[cs.length - 1].scrollIntoView({ block: "center" });
+              const c = document.querySelector('.interaction-container') || [...document.querySelectorAll('[class*="comment"]')].pop();
+              if (c) c.scrollIntoView({ block: "center" });
             }""")
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1.2)
+        # 评论区默认折叠（只显示几条）：尝试点击「展开/查看全部评论」类按钮；无按钮则滚动到底加载
+        for _ in range(2):
+            clicked = await page.evaluate("""() => {
+              const btns = [...document.querySelectorAll('button, [role="button"], div, span')].filter(e => {
+                const t = (e.innerText || '').trim();
+                return t.length < 20 && /(展开|查看)?全部评论|查看更多评论/.test(t);
+              });
+              for (const b of btns) {
+                if (b.tagName === 'BUTTON' || b.getAttribute('role') === 'button' || b.childElementCount === 0) {
+                  try { b.click(); return true; } catch (e) { return false; }
+                }
+              }
+              return false;
+            }""")
+            if clicked:
+                await asyncio.sleep(2.5)
+                await page.evaluate("""() => {
+                  const c = document.querySelector('.interaction-container') || [...document.querySelectorAll('[class*="comment"]')].pop();
+                  if (c) c.scrollIntoView({ block: "center" });
+                }""")
+                await asyncio.sleep(2)
+            else:
+                await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+                await asyncio.sleep(2)
         return await page.evaluate("() => xhsExtractComments()")
     finally:
         await page.close()

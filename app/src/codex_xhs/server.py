@@ -93,6 +93,14 @@ def _init_tables(con):
             PRIMARY KEY (uid, feed_id)
         )
     """)
+    # 存草稿（长期保留资产；区别于搜索/采集结果——用完即失效）
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS drafts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            feed_id TEXT, title TEXT, content TEXT, tags TEXT,
+            visibility TEXT, status TEXT DEFAULT 'draft', created_at TEXT
+        )
+    """)
     con.commit()
 
 
@@ -199,6 +207,11 @@ async def search(req: SearchReq):
         search_err = str(e)
     if not notes:
         return {"added": 0, "total": before, "top": [], "note": f"搜索未返回结果（{search_err[:80]}），请确认 Chrome 已打开并登录小红书后重试"}
+
+    # 数据模型：搜索结果用完即失效——新结果替换旧结果（旧搜索批次不长期保留；
+    # 长期资产仅发布记录/草稿/采集客户）。旧批次在下一次搜索时被整体清空。
+    con.execute("DELETE FROM notes")
+    con.commit()
 
     cache = {}
     saved = 0
@@ -631,12 +644,26 @@ async def import_cookie(req: ImportCookieReq):
 # ================= 发布 =================
 class PublishReq(BaseModel):
     title: str
-    content: str
+    content: str = ""
+    desc: str = ""  # 兼容前端旧字段（apiPublish 传 desc）
     tags: list[str] = []
     visibility: str = "仅自己可见"
     images: list[str] = []
     feed_id: str = ""
     is_original: bool = False
+
+
+@app.post("/api/save_draft")
+async def save_draft(req: PublishReq):
+    """存草稿（长期保留资产；与搜索/采集结果'用完即失效'区分，草稿可随时恢复）"""
+    con = _db()
+    con.execute(
+        "INSERT INTO drafts (feed_id, title, content, tags, visibility, status, created_at) VALUES (?,?,?,?,?,?,?)",
+        (req.feed_id or "", req.title[:50], (req.content or req.desc)[:200], ",".join(req.tags), req.visibility,
+         "draft", _now().isoformat(timespec="seconds")),
+    )
+    con.commit()
+    return {"ok": True, "note": "草稿已保存（长期保留，可在草稿库恢复）"}
 
 
 # 发布拟人化护栏（2026-10-26 v3 修订：合理像人档，保留自动化）
@@ -776,7 +803,7 @@ def publish(req: PublishReq):
         }
 
     # ⑦ 文案防重：同一标题+正文 24h 内已成功发布 → 拒绝
-    if _duplicate_published(con, req.title, req.content):
+    if _duplicate_published(con, req.title, req.content or req.desc):
         return {
             "ok": False,
             "cooldown": True,
@@ -794,7 +821,7 @@ def publish(req: PublishReq):
 
     con.execute(
         "INSERT INTO publish_logs (feed_id, title, content, tags, visibility, status, created_at) VALUES (?,?,?,?,?,?,?)",
-        (req.feed_id, req.title[:50], req.content[:200], ",".join(req.tags), req.visibility,
+        (req.feed_id, req.title[:50], (req.content or req.desc)[:200], ",".join(req.tags), req.visibility,
          "success" if ok else "failed", _now().isoformat(timespec="seconds")),
     )
     con.commit()

@@ -57,6 +57,20 @@ export async function apiPublish(payload: {
   }))
 }
 
+export async function apiSaveDraft(payload: {
+  title: string
+  desc: string
+  tags: string[]
+  images: string[]
+  visible: string
+}): Promise<{ ok: boolean; note?: string; [k: string]: unknown }> {
+  return j(await fetch(`${BASE}/api/save_draft`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }))
+}
+
 export async function apiLogs(): Promise<LogItem[]> {
   return j(await fetch(`${BASE}/api/logs`))
 }

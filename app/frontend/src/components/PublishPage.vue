@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { appState, coverProxy, setStage, toast } from '../store'
-import { apiClone, apiPublish } from '../api'
+import { apiClone, apiPublish, apiSaveDraft } from '../api'
 import type { Note } from '../types'
 
 const emit = defineEmits<{ (e: 'back'): void }>()
@@ -69,7 +69,18 @@ function back() {
 }
 
 async function saveDraft() {
-  toast('草稿已保存（本地草稿库）')
+  try {
+    const r = await apiSaveDraft({
+      title: title.value,
+      desc: body.value,
+      tags: tags.value.split(/[\s,，]+/).filter(Boolean).map(t => (t.startsWith('#') ? t : '#' + t)),
+      images: images.value,
+      visible: visible.value
+    })
+    toast(r.ok ? '草稿已保存（长期保留）' : `保存失败：${r.note || '未知原因'}`)
+  } catch (e) {
+    toast(`保存失败：${(e as Error).message}`)
+  }
 }
 
 async function publish() {
