@@ -42,8 +42,11 @@ const collectOptions = [
   { value: 'timer', label: '定时/计划采集（即将上线）', enabled: false }
 ]
 
-const sortOptions = ['综合', '最新', '最热']
+const sortOptions = ['综合', '最新', '最多点赞', '最多评论', '最多收藏']
 const typeOptions = ['全部', '图文', '视频']
+const timeOptions = ['不限', '一天内', '一周内', '半年内']
+const scopeOptions = ['不限', '已看过', '未看过', '已关注']
+const distanceOptions = ['不限', '同城', '附近']
 
 let collectTaskId = ''
 let collectTimer: ReturnType<typeof setInterval> | null = null
@@ -199,6 +202,28 @@ onMounted(async () => {
               <option v-for="t in typeOptions" :key="t">{{ t }}</option>
             </select>
           </div>
+          <div class="param">
+            <label>发布时间</label>
+            <select v-model="appState.params.timeRange" style="width:100%">
+              <option v-for="t in timeOptions" :key="t">{{ t }}</option>
+            </select>
+          </div>
+        </div>
+        <div class="param-row">
+          <div class="param">
+            <label>搜索范围</label>
+            <select v-model="appState.params.scope" style="width:100%">
+              <option v-for="t in scopeOptions" :key="t">{{ t }}</option>
+            </select>
+          </div>
+          <div class="param">
+            <label>位置距离</label>
+            <select v-model="appState.params.distance" style="width:100%">
+              <option v-for="t in distanceOptions" :key="t">{{ t }}</option>
+            </select>
+          </div>
+        </div>
+        <div class="param-row">
           <div class="param">
             <label>全局请求间隔（ms）</label>
             <input v-model.number="appState.params.interval" type="number" min="300" step="100" />

@@ -43,10 +43,11 @@ def _parse_likes(s: str) -> int:
     return int(v)
 
 
-async def search_via_browser(keyword: str, limit: int = 20, on_progress=None, should_stop=None) -> dict:
+async def search_via_browser(keyword: str, limit: int = 20, on_progress=None, should_stop=None, filters: dict | None = None) -> dict:
     """本地浏览器搜索（Playwright 复用 Chrome 连接，DOM 层提取卡片）。
 
     任务式采集：支持进度回调 on_progress(n) 与中途停止 should_stop()。
+    filters：搜索筛选（排序/笔记类型/发布时间/搜索范围/位置距离），透传浏览器应用。
     返回 {"items": notes 列表, "stopped": bool}。
     """
     from codex_xhs import browser_client
@@ -55,6 +56,7 @@ async def search_via_browser(keyword: str, limit: int = 20, on_progress=None, sh
         keyword, limit,
         on_progress=on_progress,
         should_stop=should_stop,
+        filters=filters,
     )
     items = data.get("items", [])[:limit]
     notes = []

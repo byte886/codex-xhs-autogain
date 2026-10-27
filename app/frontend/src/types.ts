@@ -37,6 +37,9 @@ export interface SearchParams {
   limit: number
   sort: string
   noteType: string
+  timeRange: string
+  scope: string
+  distance: string
   interval: number
 }
 

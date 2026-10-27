@@ -10,6 +10,9 @@ export const appState = reactive({
     limit: 50,
     sort: '综合',
     noteType: '全部',
+    timeRange: '不限',
+    scope: '不限',
+    distance: '不限',
     interval: 1000
   } as SearchParams,
   collecting: false,

@@ -210,6 +210,12 @@ async def qrcode():
 class SearchReq(BaseModel):
     keyword: str
     limit: int = 20
+    # 搜索筛选（对应小红书「筛选」弹层，中文选项；默认值=不筛选）
+    sort: str = ""
+    note_type: str = ""
+    time_range: str = ""
+    scope: str = ""
+    distance: str = ""
 
 
 async def _require_login():
@@ -229,7 +235,13 @@ async def search(req: SearchReq):
     await _require_login()
     before = _db().execute("SELECT COUNT(*) FROM notes").fetchone()[0]
     try:
-        res = await search_via_browser(req.keyword, req.limit)
+        res = await search_via_browser(
+            req.keyword, req.limit,
+            filters={
+                "sort": req.sort, "note_type": req.note_type,
+                "time_range": req.time_range, "scope": req.scope, "distance": req.distance,
+            },
+        )
         notes = res.get("items", [])
     except Exception as e:
         return {"added": 0, "total": before, "top": [], "note": f"搜索未返回结果（{str(e)[:80]}），请确认 Chrome 已打开并登录小红书后重试"}
@@ -348,6 +360,10 @@ async def collect_start(req: SearchReq):
                 req.keyword, req.limit,
                 on_progress=lambda n: state.__setitem__("collected", n),
                 should_stop=lambda: state["stop_event"],
+                filters={
+                    "sort": req.sort, "note_type": req.note_type,
+                    "time_range": req.time_range, "scope": req.scope, "distance": req.distance,
+                },
             )
             items = res["items"]
             state["collected"] = len(items)

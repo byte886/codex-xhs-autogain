@@ -445,7 +445,50 @@ async def _wait_note_cards(page, timeout_s: float = 45) -> bool:
     return False
 
 
-async def _prepare_search_page(keyword: str):
+async def _apply_filters(page, filters: dict):
+    """搜索页应用筛选（对应小红书「筛选」弹层）：排序 / 笔记类型 / 发布时间 / 搜索范围 / 位置距离。
+
+    跳过默认值（综合 / 全部 / 不限）：只在用户明确选择非默认条件时点击对应选项。
+    点击条件后页面会刷新（URL 带 type 等参数），每项点击后等待结果重新加载。
+    """
+    wanted = [
+        (label, val)
+        for label, val in [
+            ("排序依据", filters.get("sort")),
+            ("笔记类型", filters.get("note_type")),
+            ("发布时间", filters.get("time_range")),
+            ("搜索范围", filters.get("scope")),
+            ("位置距离", filters.get("distance")),
+        ]
+        if val and val not in ("综合", "全部", "不限", "")
+    ]
+    if not wanted:
+        return
+    for _label, val in wanted:
+        # 展开筛选弹层（每次点击前确保弹层打开）
+        await page.evaluate("""() => {
+            const el = [...document.querySelectorAll('span, div')].find(x => (x.innerText || '').trim() === '筛选');
+            if (el) el.click();
+        }""")
+        await asyncio.sleep(1.2)
+        await page.evaluate(
+            f"""() => {{
+                const els = [...document.querySelectorAll('div.tags, div.channel')];
+                const t = els.find(x => (x.innerText || '').trim() === {json.dumps(val, ensure_ascii=False)});
+                if (t) {{ t.click(); return true; }}
+                return false;
+            }}"""
+        )
+        await asyncio.sleep(2.5)  # 点击后页面刷新，等结果重新渲染
+    # 收起弹层（避免遮挡滚动提取）
+    await page.evaluate("""() => {
+        const el = [...document.querySelectorAll('span, div')].find(x => (x.innerText || '').trim() === '收起');
+        if (el) el.click();
+    }""")
+    await asyncio.sleep(1.2)
+
+
+async def _prepare_search_page(keyword: str, filters: dict | None = None):
     """打开搜索页并等卡片渲染；新版 AI 搜索页（无 note-item）回退旧版 URL。返回可用 page。"""
     url = _XHS + "/search_result?keyword=" + _urlencode(keyword) + "&source=web_search_result_notes"
     page = await _load(url, 2500)
@@ -454,7 +497,12 @@ async def _prepare_search_page(keyword: str):
         # AI 搜索页（无 section.note-item）→ 回退无 source 的旧版搜索
         await page.close()
         page = await _load(_XHS + "/search_result?keyword=" + _urlencode(keyword), 2500)
-        await _wait_note_cards(page, timeout_s=45)
+        appeared = await _wait_note_cards(page, timeout_s=45)
+    if appeared:
+        # 应用筛选条件后再采集（页面可能刷新，需再次等待卡片）
+        await _apply_filters(page, filters or {})
+        if filters:
+            await _wait_note_cards(page, timeout_s=30)
     return page
 
 
@@ -489,14 +537,15 @@ def _should_stop_collect(count: int, limit: int, stale: int, added: int, should_
     return False, stale
 
 
-async def search(keyword: str, limit: int = 30, on_progress=None, should_stop=None) -> dict:
+async def search(keyword: str, limit: int = 30, on_progress=None, should_stop=None, filters: dict | None = None) -> dict:
     """任务式采集：滚动平台搜索页逐批提取，支持去重合并、进度回调与中途停止。
 
     - on_progress(n)：每批提取后回调已采集数量（供任务进度展示）
     - should_stop()：返回 True 时提前收尾（用户点「停止采集」）
+    - filters：搜索筛选（排序/笔记类型/发布时间/搜索范围/位置距离），打开页后应用
     - 总时长上限 120s：平台 AI 搜索页渲染慢时的兜底，超时返回已采集部分
     """
-    page = await _prepare_search_page(keyword)
+    page = await _prepare_search_page(keyword, filters)
     items: list = []
     seen: set = set()
     stale = 0
