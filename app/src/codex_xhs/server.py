@@ -127,7 +127,9 @@ async def login_status():
             ws = next((c.get("value", "") for c in cookies if c.get("name") == "web_session"), "")
             now_ts = int(time.time())
             exps = [c.get("expires") for c in cookies if c.get("name") == "web_session"]
-            exp_ok = (not exps) or any((e or 0) >= now_ts for e in exps)
+            # expires=None 是会话级 Cookie（浏览器会话内一直有效，Chrome 导出不携带过期时间）
+            # → 视为有效；有 expires 且在未来才有效
+            exp_ok = (not exps) or any(e is None or (e or 0) >= now_ts for e in exps)
             logged_in = bool(ws) and exp_ok
         result = {
             "status": "logged_in" if logged_in else "not_logged_in",
@@ -550,7 +552,9 @@ async def refresh_cookie_from_chrome():
         raise HTTPException(502, f"校验失败（独立浏览器未就绪）：{str(e)[:100]}")
     finally:
         try:
-            await browser_client.stop_profile()  # 用后即停：校验完杀掉 9223，Dock 不留多余图标
+            # 用后即停仅限后台窗口模式；演示（XHS_PROFILE_WINDOW=normal）保留窗口供用户查看
+            if os.environ.get("XHS_PROFILE_WINDOW") != "normal":
+                await browser_client.stop_profile()
         except Exception:  # noqa: BLE001
             pass
 
@@ -598,7 +602,8 @@ async def import_cookie(req: ImportCookieReq):
         raise HTTPException(502, f"校验失败（独立浏览器未就绪）：{str(e)[:100]}")
     finally:
         try:
-            await browser_client.stop_profile()  # 用后即停：校验完杀掉 9223，Dock 不留多余图标
+            if os.environ.get("XHS_PROFILE_WINDOW") != "normal":
+                await browser_client.stop_profile()
         except Exception:  # noqa: BLE001
             pass
 

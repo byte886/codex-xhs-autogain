@@ -103,18 +103,18 @@ onMounted(async () => {
   const loggedIn = !!(lg && lg.logged_in)
   appState.login = { logged_in: loggedIn, nickname: (lg && lg.nickname) || '' }
   if (!loggedIn) {
+    // 先弹登录引导（用户立即可见），后台同时自动尝试方案 A 读取日常 Chrome：
+    // 成功 → 自动关闭弹窗并恢复；失败 → 弹窗保持，按引导「登录 → 回来刷新」完成恢复
+    if (!appState.collecting) loginOpen.value = true
     try {
       const r = await apiRefreshCookieFromChrome()
       if (r && r.ok) {
         appState.login = { logged_in: true, nickname: r.account || '已登录' }
         appState.cookieRefreshTick += 1
+        loginOpen.value = false
         toast(r.note || '已自动从 Chrome 恢复登录态')
-      } else if (!appState.collecting) {
-        loginOpen.value = true
       }
-    } catch {
-      if (!appState.collecting) loginOpen.value = true
-    }
+    } catch { /* 后台读取失败：弹窗引导保持 */ }
   }
   try {
     const r = await apiNotes('', 'score')
