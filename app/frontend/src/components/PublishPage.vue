@@ -64,6 +64,25 @@ function removeImg(i: number) {
   images.value.splice(i, 1)
 }
 
+// 拖拽排序（原生 HTML5 DnD）：拖放后重排 images 数组，发布/草稿按新顺序生效
+const dragIndex = ref(-1)
+function onDragStart(i: number) {
+  dragIndex.value = i
+}
+function onDragOver(ev: DragEvent) {
+  ev.preventDefault()
+}
+function onDrop(i: number) {
+  if (dragIndex.value >= 0 && dragIndex.value !== i) {
+    const [moved] = images.value.splice(dragIndex.value, 1)
+    images.value.splice(i, 0, moved)
+  }
+  dragIndex.value = -1
+}
+function onDragEnd() {
+  dragIndex.value = -1
+}
+
 // 图片全图预览（lightbox）
 const previewUrl = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -164,9 +183,19 @@ async function publish() {
           <input v-model="tags" placeholder="#翡翠 #手镯 #珠宝" style="width:100%" />
         </div>
         <div class="pub-field">
-          <label>图片 <span class="limit">点击缩略图看全图 / 可调序 / 删改 / 追加</span></label>
+          <label>图片 <span class="limit">拖拽调序 / 点击看全图 / 删改 / 追加</span></label>
           <div class="pub-imgs">
-            <div v-for="(img, i) in images" :key="i" class="pub-img">
+            <div
+              v-for="(img, i) in images"
+              :key="i"
+              class="pub-img"
+              :class="{ dragging: dragIndex === i }"
+              draggable="true"
+              @dragstart="onDragStart(i)"
+              @dragover="onDragOver"
+              @drop="onDrop(i)"
+              @dragend="onDragEnd"
+            >
               <img v-if="img" :src="coverProxy(img)" alt="" @click="openPreview(coverProxy(img))" />
               <span class="x" @click="removeImg(i)">×</span>
             </div>
