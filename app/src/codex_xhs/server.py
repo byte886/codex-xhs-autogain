@@ -104,7 +104,11 @@ _LOGIN_CACHE_TTL = 30.0
 
 @app.get("/api/login_status")
 async def login_status():
-    """本地浏览器登录态检测：经常驻 Playwright 连接（复用 Chrome 连接，不反复弹授权窗）。结果缓存 30s。"""
+    """登录态检测（轻量版）：只读本地已保存 cookies.json——存在且含未过期的 web_session 即视为已登录。
+
+    刻意【不拉独立浏览器】：避免登录轮询/页面打开时反复拉起 9223（Dock 图标/窗口干扰）。
+    浏览器深度校验（explore 真实判定）仅在导入 Cookie / 读取 Chrome / 采集前置等按需动作中进行。
+    """
     import time
 
     now = time.monotonic()
@@ -112,17 +116,26 @@ async def login_status():
         return _LOGIN_CACHE["data"]
 
     try:
-        from codex_xhs import browser_client
-        st = await browser_client.login_check()
-        ok = st.get("logged_in")
+        p = BASE / "data" / "cookies.json"
+        logged_in = False
+        ws = ""
+        exp_ok = True
+        if p.exists():
+            data = json.loads(p.read_text(encoding="utf8"))
+            cookies = data.get("cookies", [])
+            ws = next((c.get("value", "") for c in cookies if c.get("name") == "web_session"), "")
+            now_ts = int(time.time())
+            exps = [c.get("expires") for c in cookies if c.get("name") == "web_session"]
+            exp_ok = (not exps) or any((e or 0) >= now_ts for e in exps)
+            logged_in = bool(ws) and exp_ok
         result = {
-            "status": "logged_in" if ok else "not_logged_in",
-            "logged_in": bool(ok),
+            "status": "logged_in" if logged_in else "not_logged_in",
+            "logged_in": logged_in,
             "nickname": "",
-            "raw": f"url={st.get('url')} noteCards={st.get('noteCards')}",
+            "raw": f"local-cookie web_session={'有' if ws else '无'} expires={'未来' if exp_ok else '过期'}",
         }
     except Exception as e:
-        result = {"status": "unknown", "logged_in": False, "nickname": "", "raw": f"本地浏览器检测失败: {str(e)[:100]}"}
+        result = {"status": "unknown", "logged_in": False, "nickname": "", "raw": f"本地判定失败: {str(e)[:80]}"}
 
     _LOGIN_CACHE["t"] = now
     _LOGIN_CACHE["data"] = result
@@ -528,6 +541,11 @@ async def refresh_cookie_from_chrome():
         r = await browser_client.verify_cookies(cookies)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"校验失败（独立浏览器未就绪）：{str(e)[:100]}")
+    finally:
+        try:
+            await browser_client.stop_profile()  # 用后即停：校验完杀掉 9223，Dock 不留多余图标
+        except Exception:  # noqa: BLE001
+            pass
 
     if not r.get("logged_in"):
         return {
@@ -571,6 +589,11 @@ async def import_cookie(req: ImportCookieReq):
         r = await browser_client.verify_cookies(cookies)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"校验失败（独立浏览器未就绪）：{str(e)[:100]}")
+    finally:
+        try:
+            await browser_client.stop_profile()  # 用后即停：校验完杀掉 9223，Dock 不留多余图标
+        except Exception:  # noqa: BLE001
+            pass
 
     if not r.get("logged_in"):
         return {

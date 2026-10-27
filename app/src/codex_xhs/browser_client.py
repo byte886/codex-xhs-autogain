@@ -215,18 +215,89 @@ async def _load(url: str, wait_ms: int = 5000):
 
 
 async def login_check() -> dict:
-    page = await _load(_XHS + "/explore", 6000)
+    """登录态检测：优先走无界面 headless 判定（不产生窗口/Dock 图标），失败回退常驻浏览器。"""
     try:
-        return await page.evaluate(
-            "() => ({"
-            " logged_in: !!xhsIsLoggedIn(),"
-            " url: location.href,"
-            " hasLoginUi: /website-login|captcha/i.test(location.href),"
-            " noteCards: xhsExtractSearchNotes().length"
-            "})"
-        )
+        return await _login_check_headless()
+    except Exception as e:  # noqa: BLE001
+        print(f"[login_check] headless 判定失败，回退浏览器: {e}")
+        page = await _load(_XHS + "/explore", 6000)
+        try:
+            return await page.evaluate(
+                "() => ({"
+                " logged_in: !!xhsIsLoggedIn(),"
+                " url: location.href,"
+                " hasLoginUi: /website-login|captcha/i.test(location.href),"
+                " noteCards: xhsExtractSearchNotes().length"
+                "})"
+            )
+        finally:
+            await page.close()
+
+
+_h_pw = None
+_h_browser = None
+
+
+async def _headless_page():
+    """无界面 Chromium（channel=chrome 无头模式）：不产生窗口、不进 Dock。
+    仅承担登录判定/校验，不承担采集（采集走常驻 9223）。"""
+    global _h_pw, _h_browser
+    if _h_pw is None:
+        _h_pw = await async_playwright().start()
+    if _h_browser is None or not _h_browser.is_connected():
+        _h_browser = await _h_pw.chromium.launch(channel="chrome", headless=True)
+    return _h_browser
+
+
+async def _headless_explore(cookies: list[dict]) -> dict:
+    """在无界面 Chromium 中：清 Cookie → 注入指定 Cookie → 打开小红书首页判定登录态。
+
+    headless 下 explore 无 cookie 时会发生 SPA 重定向（evaluate 注入的函数会随旧文档丢失），
+    因此用 add_init_script 在【每次文档加载前】自动注入提取脚本，判定时全局函数必然存在。
+    """
+    b = await _headless_page()
+    ctx = b.contexts[0] if b.contexts else await b.new_context()
+    try:
+        await ctx.clear_cookies()
+        await ctx.add_init_script(_EXTRACT_SRC)
+        if cookies:
+            try:
+                await ctx.add_cookies(cookies)
+            except Exception:  # noqa: BLE001
+                pass
+        page = await ctx.new_page()
+        try:
+            await page.goto(_XHS + "/explore", wait_until="domcontentloaded", timeout=40000)
+            await asyncio.sleep(5)
+            return await page.evaluate(
+                "() => ({"
+                " logged_in: !!xhsIsLoggedIn(),"
+                " url: location.href,"
+                " hasLoginUi: /website-login|captcha/i.test(location.href),"
+                " noteCards: xhsExtractSearchNotes().length"
+                "})"
+            )
+        finally:
+            await page.close()
     finally:
-        await page.close()
+        # 判定完成后移除注入脚本，避免污染后续 context 复用
+        try:
+            await ctx.remove_init_script(_EXTRACT_SRC)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _login_check_headless() -> dict:
+    """headless 登录判定：自动带上已保存 cookies.json（生产登录态），无浏览器窗口。"""
+    ck: list = []
+    try:
+        p = _ROOT / "data" / "cookies.json"
+        if p.exists():
+            data = json.loads(p.read_text(encoding="utf8"))
+            ck = data.get("cookies", []) or []
+    except Exception:  # noqa: BLE001
+        ck = []
+    return await _headless_explore(ck)
 
 
 async def cookies() -> dict:
@@ -250,7 +321,24 @@ async def cookies() -> dict:
 
 
 async def verify_cookies(cookies: list[dict]) -> dict:
-    """校验导入/读取的 Cookie（生产路径预演）：在独立 profile Chrome 中【先清空已有 Cookie】→
+    """校验导入/读取的 Cookie：优先无界面 headless 判定（不弹窗口），失败回退独立 profile Chrome。
+
+    headless 判定说明：无头 Chromium 中清 Cookie → 只注入待校验 Cookie → 访问小红书首页判定登录态；
+    不产生任何窗口/Dock 图标（用户「只用一个 Chrome」诉求）。若 headless 判定结果异常（页面未加载、
+    url 为空等）则回退 9223 常驻浏览器执行原校验逻辑。
+    """
+    try:
+        r = await _headless_explore(cookies)
+        if not r.get("url") or not isinstance(r.get("hasLoginUi"), bool):
+            raise RuntimeError("headless 判定结果异常")
+        return r
+    except Exception as e:  # noqa: BLE001
+        print(f"[verify_cookies] headless 校验失败，回退 9223: {e}")
+        return await _verify_profile(cookies)
+
+
+async def _verify_profile(cookies: list[dict]) -> dict:
+    """（回退路径）在独立 profile Chrome 中【先清空已有 Cookie】→
     只注入待校验 Cookie → 访问小红书首页判定登录态。
 
     必须清空的原因：9223 是常驻浏览器，context 里可能残留此前注入的有效 Cookie；不清空直接
@@ -301,6 +389,30 @@ async def verify_cookies(cookies: list[dict]) -> dict:
                 await ctx.add_cookies(ck)
         except Exception:  # noqa: BLE001 恢复失败不阻断校验结果
             pass
+
+
+async def stop_profile():
+    """用后即停：断开连接并杀掉独立 profile Chrome（9223），消除 Dock 多余图标。
+
+    适用场景：一次性动作（Cookie 校验/读取）完成后调用，让生产浏览器按需拉起而非常驻；
+    采集/搜索等连续动作期间保持运行（不调用本函数）。
+    """
+    global _browser
+    try:
+        if _browser is not None:
+            try:
+                await _browser.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+            _browser = None
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        subprocess.run(["pkill", "-9", "-f", "remote-debugging-port=9223"],
+                       capture_output=True, timeout=10)
+    except Exception:  # noqa: BLE001
+        pass
+    return True
 
 
 async def search(keyword: str, limit: int = 30) -> dict:
