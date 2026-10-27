@@ -200,6 +200,7 @@ const selCount = computed(() => selectedCount())
             :title="note.note_type === 'video' ? '视频暂不支持克隆' : '一键克隆（抄内容）'"
             @click.stop="note.note_type === 'video' ? toast('视频笔记暂不支持一键克隆（视频克隆待办中）') : emit('clone', note)"
           >一键克隆</button>
+          <button class="ha-btn origin" title="打开小红书原作品页" @click.stop="openOrigin(note)">打开原文</button>
           <button class="ha-btn client" title="采集客户（采人）" @click.stop="emit('clients', note)">采集客户</button>
         </div>
       </div>

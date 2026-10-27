@@ -20,6 +20,15 @@ function fmt(n: number | null | undefined): string {
   const v = n || 0
   return v >= 10000 ? (v / 10000).toFixed(1) + '万' : String(v)
 }
+
+/** 打开小红书原作品页（新 tab）：有 xsec_token 走详情直链，无则 explore 兜底 */
+function openOrigin(n: Note) {
+  const token = n.xsec_token
+  const base = token
+    ? `https://www.xiaohongshu.com/explore/${n.feed_id}?xsec_token=${encodeURIComponent(token)}`
+    : `https://www.xiaohongshu.com/explore/${n.feed_id}`
+  window.open(base, '_blank')
+}
 </script>
 
 <template>
@@ -39,6 +48,7 @@ function fmt(n: number | null | undefined): string {
       </div>
       <div class="actions">
         <button class="b-btn primary" @click="emit('clone', n)">一键克隆</button>
+        <button class="b-btn" @click="openOrigin(n)">打开原文</button>
         <button class="b-btn" @click="() => {}">采集客户</button>
       </div>
     </div>

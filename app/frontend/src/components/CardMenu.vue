@@ -36,12 +36,12 @@ function clients() {
 }
 
 function openOrigin() {
-  if (props.note?.xsec_token) {
-    const url = `https://www.xiaohongshu.com/explore/${props.note.feed_id}?xsec_token=${props.note.xsec_token}`
-    window.open(url, '_blank')
-  } else {
-    toast('该笔记缺少原作品链接')
-  }
+  if (!props.note) return
+  const token = props.note.xsec_token
+  const base = token
+    ? `https://www.xiaohongshu.com/explore/${props.note.feed_id}?xsec_token=${encodeURIComponent(token)}`
+    : `https://www.xiaohongshu.com/explore/${props.note.feed_id}`
+  window.open(base, '_blank')
   emit('close')
 }
 </script>
