@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { appState, setStage, toast } from '../store'
-import { apiCollectProgress, apiCollectStart, apiCollectStop, apiCookieInfo, apiImportCookieText, apiLoginStatus, apiNotes, apiCdpStatus, apiCdpSetup, apiCdpOpenInspect } from '../api'
+import { apiCollectProgress, apiCollectStart, apiCollectStop, apiCookieInfo, apiImportCookieText, apiLoginStatus, apiNotes, apiCdpStatus, apiCdpSetup, apiCdpOpenInspect, apiCdpPickChrome } from '../api'
 import type { CookieItem, ImportCookieResult, CdpStatus } from '../api'
 
 const emit = defineEmits<{ (e: 'collect-started'): void; (e: 'open-login'): void }>()
@@ -20,6 +20,18 @@ const cdpStatus = ref<CdpStatus | null>(null)
 const cdpBusy = ref(false)
 const cdpChromePath = ref('')
 const cdpProfileDir = ref('')
+const cdpState = computed(() => cdpStatus.value?.state || 'unknown')
+const cdpNeedChrome = computed(() => cdpState.value === 'need_chrome')
+const cdpCanSetup = computed(() => !!cdpStatus.value?.chrome_found && !cdpBusy.value)
+const cdpStateText = computed(() => {
+  const s = cdpState.value
+  const st = cdpStatus.value
+  if (s === 'ready') return `● CDP 已就绪（端口 ${st?.port ?? '?'}）`
+  if (s === 'need_chrome') return '○ 未找到 Chrome，请指定 Chrome 可执行文件路径'
+  if (s === 'not_running') return '○ Chrome 未运行，点「一键配置 CDP」自动启动并开启调试'
+  if (s === 'need_auth') return '○ Chrome 运行中但未开启远程调试（请在 Chrome 弹出的窗口点「允许」，或点下方按钮配置）'
+  return '○ CDP 状态未知，点「刷新状态」'
+})
 async function refreshCdpStatus() {
   try {
     cdpStatus.value = await apiCdpStatus()
@@ -60,6 +72,16 @@ async function doSaveCdpConfig() {
 async function doOpenInspect() {
   const r = await apiCdpOpenInspect().catch(() => ({ ok: false, note: '打开失败' }))
   toast(r.note || (r.ok ? '已打开远程调试设置页' : '打开失败'))
+}
+async function doPickChrome() {
+  const r = await apiCdpPickChrome().catch(() => ({ ok: false, note: '选择失败', chrome_path: undefined }))
+  if (r.ok && r.chrome_path) {
+    toast(`已选择 Chrome：${r.chrome_path}`)
+    cdpChromePath.value = r.chrome_path
+    refreshCdpStatus()
+  } else {
+    toast(r.note || '未选择 Chrome，可手动在输入框填写')
+  }
 }
 
 async function refreshCookieInfo() {
@@ -288,31 +310,34 @@ onMounted(async () => {
     <section>
       <div class="sec-title">CDP 自动化 <span class="tag">配置</span></div>
       <div class="cdp-box">
-        <div class="cdp-status" :class="cdpStatus?.port_ready ? 'ok' : 'err'">
-          {{ cdpStatus?.port_ready ? `● CDP 已就绪（端口 ${cdpStatus.port}）` : '○ CDP 未就绪（Chrome 未开启远程调试）' }}
-          <span class="cdp-sub">{{ cdpStatus?.chrome_running ? 'Chrome 运行中' : 'Chrome 未运行' }}</span>
+        <div class="cdp-status" :class="cdpState === 'ready' ? 'ok' : 'err'">
+          {{ cdpStateText }}
+          <span class="cdp-sub">{{ cdpStatus?.chrome_running ? 'Chrome 运行中' : 'Chrome 未运行' }} · profile: {{ cdpStatus?.profile_dir || '…' }}</span>
         </div>
         <div class="cdp-field">
           <label>Chrome 路径 <span class="cdp-dim">（默认自动查找，可自定义）</span></label>
-          <input v-model="cdpChromePath" placeholder="自动查找系统 Chrome，可填写自定义路径" spellcheck="false" />
+          <div class="cdp-path-row">
+            <input v-model="cdpChromePath" placeholder="自动查找系统 Chrome，可填写自定义路径" spellcheck="false" />
+            <button class="c-btn" :disabled="cdpBusy" @click="doPickChrome" title="未找到 Chrome 时，弹出系统对话框选择">选择文件…</button>
+          </div>
         </div>
         <div class="cdp-field">
           <label>Profile 路径 <span class="cdp-dim">（独立 Profile，不污染日常登录态）</span></label>
           <input v-model="cdpProfileDir" placeholder="~/.codex-xhs-profile" spellcheck="false" />
         </div>
         <div class="cdp-actions">
-          <button class="c-btn c-btn-primary" :disabled="cdpBusy" @click="doCdpSetup()">
+          <button class="c-btn" :disabled="cdpBusy" @click="doSaveCdpConfig">保存路径配置</button>
+          <button class="c-btn c-btn-primary" :disabled="cdpBusy || !cdpCanSetup" @click="doCdpSetup()">
             {{ cdpBusy ? '配置中…' : '一键配置 CDP' }}
           </button>
-          <button class="c-btn" :disabled="cdpBusy" @click="doOpenInspect">打开远程调试设置（引导）</button>
-          <button class="c-btn" :disabled="cdpBusy" @click="doCdpSetup(true)" title="Chrome 已运行未开调试时，自动退出后以调试参数重启">
+          <button class="c-btn" :disabled="cdpBusy || !cdpCanSetup" @click="doOpenInspect">打开远程调试设置（引导）</button>
+          <button class="c-btn" :disabled="cdpBusy || !cdpCanSetup" @click="doCdpSetup(true)" title="Chrome 已运行未开调试时，自动退出后以调试参数重启">
             自动重启并配置
           </button>
           <button class="c-btn" @click="refreshCdpStatus">刷新状态</button>
         </div>
         <p class="cdp-hint">
-          点「一键配置 CDP」：Chrome 未运行时自动带参数启动并打开配置页，在弹出的 Chrome 里点「允许」即可（Chrome 已运行则先退出再点，或改用引导方式）。
-          「打开远程调试设置」为引导备用（Chrome 144+ 免参数开关）。
+          未找到 Chrome 时点「选择文件…」指定安装位置；配置好后相关按钮自动解锁。一键配置：自动带参数启动 Chrome 并打开配置页，在弹窗里点「允许」即可；已运行则先退出或点引导方式。
         </p>
       </div>
     </section>
@@ -421,4 +446,6 @@ onMounted(async () => {
 .cdp-dim { color: #aaa; font-size: 11px; }
 .cdp-field input { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 12px; border: 1px solid #e5e5e5; border-radius: 6px; }
 .cdp-field input:focus { outline: none; border-color: #ff2442; }
+.cdp-path-row { display: flex; gap: 6px; }
+.cdp-path-row input { flex: 1; min-width: 0; }
 </style>

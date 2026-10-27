@@ -213,6 +213,40 @@ def _platform_setup_script() -> Path | None:
     return p if p.exists() else None
 
 
+def _pick_chrome_script() -> Path | None:
+    """生产环境脚本：系统文件对话框选择 Chrome（未找到可用 Chrome 时使用）。"""
+    p = Path(__file__).resolve().parents[3] / "app" / "scripts" / "pick_chrome.py"
+    return p if p.exists() else None
+
+
+def _pick_chrome_file() -> str | None:
+    """弹系统文件对话框选择 Chrome（调生产脚本 pick_chrome.py：macOS 选 .app、Windows 选 chrome.exe）。
+
+    用户取消返回 None（不视为错误）。
+    """
+    script = Path(__file__).resolve().parents[3] / "app" / "scripts" / "pick_chrome.py"
+    try:
+        if not script.exists():
+            return None
+        out = subprocess.run([sys.executable, str(script)],
+                             capture_output=True, text=True, timeout=320)
+        p = out.stdout.strip()
+        return p if p and os.path.exists(p) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@app.post("/api/cdp_pick_chrome")
+async def cdp_pick_chrome():
+    """未找到 Chrome 时：弹系统文件对话框让用户指定 Chrome 可执行文件，并自动保存路径配置。"""
+    from codex_xhs import browser_client
+    path = _pick_chrome_file()
+    if not path:
+        return {"ok": False, "note": "未选择文件或已取消"}
+    browser_client.save_cdp_config(chrome_path=path)
+    return {"ok": True, "chrome_path": path, "note": "Chrome 路径已设置，请点「刷新状态」继续"}
+
+
 @app.get("/api/cdp_status")
 async def cdp_status():
     """CDP 自动化状态：Chrome 是否安装/运行、调试端口是否就绪、路径（默认/用户自定义）。"""
@@ -226,11 +260,22 @@ async def cdp_status():
         dev_port = _read_devtools_active_port(profile_dir)
         if dev_port:
             port_ready = await _probe_cdp(dev_port)
+    running = browser_client.chrome_running()
+    # 综合状态：ready=就绪 / need_chrome=未找到Chrome / not_running=未运行(可一键启动) / need_auth=运行中但调试未就绪(未开开关/授权拒绝/需重启)
+    if port_ready:
+        state = "ready"
+    elif chrome is None:
+        state = "need_chrome"
+    elif not running:
+        state = "not_running"
+    else:
+        state = "need_auth"
     return {
         "ok": True,
+        "state": state,
         "port": dev_port or port,
         "port_ready": port_ready,
-        "chrome_running": browser_client.chrome_running(),
+        "chrome_running": running,
         "chrome_found": chrome is not None,
         "chrome_path": chrome or "",
         "profile_dir": profile_dir,
@@ -308,7 +353,23 @@ async def cdp_setup(req: CdpSetupReq):
         await asyncio.sleep(1)
         if await _probe_cdp(port):
             return {"ok": True, "status": "ready", "note": "CDP 已配置完成（Chrome 已带调试参数启动，独立 profile）"}
-    return {"ok": False, "note": "Chrome 已启动但调试端口未就绪，请在弹出的 Chrome 页面点「允许」后点「刷新状态」"}
+    return {"ok": False,
+            "note": "Chrome 已启动但未检测到远程调试开启——可能您未在 Chrome 弹窗中点「允许」。本次配置已停止：请重新点击「一键配置 CDP」，在 Chrome 弹窗中选择「允许」后再继续；若选择「不允许」，远程调试功能将无法使用。"}
+
+
+@app.post("/api/cdp_pick_chrome")
+async def cdp_pick_chrome():
+    """未找到可用 Chrome 时：弹出系统文件对话框让用户指定 Chrome 路径（保存后自动生效）。"""
+    from codex_xhs import browser_client
+    script = _pick_chrome_script()
+    if script is None:
+        return {"ok": False, "note": "当前系统不支持自动选择文件，请在下方手动填写 Chrome 路径"}
+    r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=320)
+    picked = (r.stdout or "").strip()
+    if not picked or not os.path.exists(picked):
+        return {"ok": False, "note": "未选择 Chrome 或路径无效，可手动在输入框填写后保存"}
+    browser_client.save_cdp_config(chrome_path=picked)
+    return {"ok": True, "chrome_path": picked, "note": f"已选择 Chrome：{picked}"}
 
 
 @app.post("/api/cdp_open_inspect")

@@ -177,6 +177,7 @@ export interface CdpStatus {
   port_ready: boolean
   chrome_running: boolean
   chrome_found: boolean
+  state: string
   chrome_path: string
   profile_dir: string
 }
@@ -195,4 +196,8 @@ export async function apiCdpSetup(restart = false): Promise<{ ok: boolean; statu
 
 export async function apiCdpOpenInspect(): Promise<{ ok: boolean; note?: string }> {
   return j(await fetch(`${BASE}/api/cdp_open_inspect`, { method: 'POST' }))
+}
+
+export async function apiCdpPickChrome(): Promise<{ ok: boolean; chrome_path?: string; note?: string }> {
+  return j(await fetch(`${BASE}/api/cdp_pick_chrome`, { method: 'POST' }))
 }
