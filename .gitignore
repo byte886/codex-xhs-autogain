@@ -42,3 +42,4 @@ extension/manifest.json
 # --- 登录态敏感：cookie 落盘文件绝不入库 ---
 data/cookies*.json
 data/cookies*.bak
+data/cookies*
