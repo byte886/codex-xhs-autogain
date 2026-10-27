@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { appState, coverProxy, setStage, toast } from '../store'
-import { apiClone, apiPublish, apiSaveDraft } from '../api'
+import { apiClone, apiPublish, apiSaveDraft, apiUploadImage } from '../api'
 import type { Note } from '../types'
 
 const emit = defineEmits<{ (e: 'back'): void }>()
@@ -62,6 +62,39 @@ defineExpose({ openFor })
 
 function removeImg(i: number) {
   images.value.splice(i, 1)
+}
+
+// 图片全图预览（lightbox）
+const previewUrl = ref('')
+const fileInput = ref<HTMLInputElement | null>(null)
+const appending = ref(false)
+
+function openPreview(url: string) {
+  previewUrl.value = url
+}
+
+function triggerAdd() {
+  fileInput.value?.click()
+}
+
+async function onAddImages(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const files = [...(input.files || [])]
+  input.value = '' // 允许重复选同一文件
+  if (!files.length) return
+  appending.value = true
+  let added = 0
+  for (const f of files) {
+    const r = await apiUploadImage(f).catch(() => ({ ok: false, note: '上传失败', path: undefined }))
+    if (r.ok && r.path) {
+      images.value.push(r.path)
+      added++
+    } else {
+      toast(`追加失败：${r.note || '未知原因'}`)
+    }
+  }
+  appending.value = false
+  if (added) toast(`已追加 ${added} 张图片（共 ${images.value.length} 张）`)
 }
 
 function back() {
@@ -131,14 +164,15 @@ async function publish() {
           <input v-model="tags" placeholder="#翡翠 #手镯 #珠宝" style="width:100%" />
         </div>
         <div class="pub-field">
-          <label>图片 <span class="limit">可调序 / 删改 / 追加</span></label>
+          <label>图片 <span class="limit">点击缩略图看全图 / 可调序 / 删改 / 追加</span></label>
           <div class="pub-imgs">
             <div v-for="(img, i) in images" :key="i" class="pub-img">
-              <img v-if="img" :src="coverProxy(img)" alt="" />
+              <img v-if="img" :src="coverProxy(img)" alt="" @click="openPreview(coverProxy(img))" />
               <span class="x" @click="removeImg(i)">×</span>
             </div>
-            <div class="pub-img add" @click="toast('演示：追加图片（P3 实现）')">＋</div>
+            <div class="pub-img add" :class="{ busy: appending }" @click="triggerAdd">{{ appending ? '…' : '＋' }}</div>
           </div>
+          <input ref="fileInput" type="file" accept="image/*" multiple style="display:none" @change="onAddImages" />
         </div>
         <div class="pub-row">
           <div class="pub-field">
@@ -166,6 +200,12 @@ async function publish() {
           <button class="btn-pub" :disabled="publishing" @click="publish">{{ publishing ? '发布中…' : '发布至' }}</button>
         </div>
       </template>
+    </div>
+
+    <!-- 图片全图预览（lightbox：点击遮罩/图关闭） -->
+    <div v-if="previewUrl" class="img-lightbox" @click="previewUrl = ''">
+      <img :src="previewUrl" alt="" @click.stop="previewUrl = ''" />
+      <div class="lb-hint">点击任意处关闭</div>
     </div>
   </div>
 </template>

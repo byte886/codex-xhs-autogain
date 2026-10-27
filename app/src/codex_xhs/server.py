@@ -25,7 +25,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -443,6 +443,27 @@ def download_images(req: DownloadImgsReq):
     resp = StreamingResponse(iter([data]), media_type="application/zip", headers=headers)
     resp.headers["X-Missing"] = json.dumps(missing)
     return resp
+
+
+# ================= 发布页追加图片 =================
+@app.post("/api/upload_image")
+async def upload_image(file: UploadFile = File(...)):
+    """发布编辑页「追加图片」：本地图片上传到 images 目录，返回代理路径（持久、可预览）。
+
+    校验：≤15MB、仅图片扩展名（jpg/jpeg/png/webp/gif）。
+    """
+    try:
+        data = await file.read()
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "note": "读取上传文件失败"}
+    if len(data) > 15 * 1024 * 1024:
+        return {"ok": False, "note": "图片过大（≤15MB）"}
+    ext = os.path.splitext(file.filename or "")[1].lower() or ".jpg"
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+        return {"ok": False, "note": "仅支持 jpg/png/webp/gif"}
+    fname = f"user_{int(time.time() * 1000)}_{random.randint(1000, 9999)}{ext}"
+    (IMAGES_DIR / fname).write_bytes(data)
+    return {"ok": True, "path": f"/app/images/{fname}", "filename": fname}
 
 
 # ================= 单条详情 =================

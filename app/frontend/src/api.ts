@@ -139,3 +139,10 @@ export async function apiQrcode(): Promise<{ ok: boolean; guide?: string; url?: 
 export async function apiCleanupImages(): Promise<{ ok: boolean; removed: number }> {
   return j(await fetch(`${BASE}/api/cleanup_images`, { method: 'POST' }))
 }
+
+/** 发布页追加图片：上传本地文件到后端 images 目录，返回代理路径 */
+export async function apiUploadImage(file: File): Promise<{ ok: boolean; path?: string; note?: string }> {
+  const fd = new FormData()
+  fd.append('file', file)
+  return j(await fetch(`${BASE}/api/upload_image`, { method: 'POST', body: fd }))
+}
