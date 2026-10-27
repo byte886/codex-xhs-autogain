@@ -1,13 +1,9 @@
 # --- 安全红线：登录态与敏感数据绝不入库 ---
-docker/data/cookies.json
-docker/data/login_qr*.png
-docker/data/config/
-docker/data/home/
 
 # --- 采集数据：含他人笔记与个人信息，不入公开仓库 ---
 data/*.db
 data/*.sqlite3
-docker/images/
+data/images/
 
 # --- Python 产物 ---
 __pycache__/
@@ -31,10 +27,8 @@ app/frontend/dist/
 # --- 原型自检产物（非交付物） ---
 docs/prototype/_shots/
 *.tsbuildinfo
-docker/data/*.db
 .metrics/
 target/
-docker/data/
 extension/background.js
 extension/content.js
 extension/manifest.json

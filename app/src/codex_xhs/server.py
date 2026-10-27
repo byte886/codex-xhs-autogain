@@ -34,7 +34,7 @@ from pydantic import BaseModel
 BASE = Path(__file__).resolve().parents[3]  # ~/Desktop/codex-zhuke（server.py 在 app/src/codex_xhs/ 下）
 DB_PATH = BASE / "data" / "xhs_notes.db"
 WEB_DIR = BASE / "app" / "web"
-IMAGES_DIR = BASE / "docker" / "images"
+IMAGES_DIR = BASE / "data" / "images"
 
 _INTERVAL = (1.0, 1.8)
 
@@ -407,7 +407,7 @@ class DownloadImgsReq(BaseModel):
 def download_images(req: DownloadImgsReq):
     """打包选中笔记的本地封面图为 zip。
 
-    图片已在本地磁盘（docker/images），直接读文件打包，无网络请求、无风控风险。
+    图片已在本地磁盘（data/images），直接读文件打包，无网络请求、无风控风险。
     缺失的 feed_id 在响应头 X-Missing 中返回（前端据此提示）。
     """
     if not req.feed_ids:
@@ -964,7 +964,7 @@ def logs():
 # ================= 图片代理（容器内路径 → 浏览器可读） =================
 @app.get("/api/img")
 def img_proxy(path: str = ""):
-    """把 /app/images/<file> 映射到本机 docker/images/<file> 返回图片字节。"""
+    """把 /app/images/<file> 映射到本机 data/images/<file> 返回图片字节。"""
     from fastapi.responses import Response
     if not path or not path.startswith("/app/images/"):
         raise HTTPException(400, "仅允许 /app/images 路径")
