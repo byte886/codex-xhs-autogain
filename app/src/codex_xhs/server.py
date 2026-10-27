@@ -47,6 +47,18 @@ from codex_xhs.collect_pipeline import (  # noqa: E402
 
 app = FastAPI(title="Codex 自动获客 · 本地工具")
 
+
+@app.on_event("startup")
+async def _startup_cleanup():
+    """启动时清理残留任务 tab：上次异常中断（进程被杀）可能遗留小红书搜索页标签，
+    不清会一直挂在 Chrome 里，用户刷新 APP 时看到「搜索页打开又关闭」。best-effort 不阻塞启动。
+    """
+    try:
+        from codex_xhs import browser_client
+        await asyncio.wait_for(browser_client.cleanup_tabs(), timeout=15)
+    except Exception:  # noqa: BLE001
+        pass
+
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
