@@ -65,7 +65,7 @@ export async function apiImportCookie(): Promise<{ ok: boolean; count?: number; 
   return j(await fetch(`${BASE}/api/import_cookie`, { method: 'POST' }))
 }
 
-export interface ImportCookieResult { ok: boolean; valid?: boolean; count?: number; account?: string; error?: string; note?: string }
+export interface ImportCookieResult { ok: boolean; valid?: boolean; count?: number; account?: string; error?: string; note?: string; need_auth?: boolean }
 
 export async function apiImportCookieText(text: string): Promise<ImportCookieResult> {
   return j(await fetch(`${BASE}/api/import_cookie`, {
@@ -73,6 +73,11 @@ export async function apiImportCookieText(text: string): Promise<ImportCookieRes
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cookie_text: text })
   }))
+}
+
+/** 方案 A：直接读日常 Chrome 的 Cookie 库（钥匙串解密），无需手动复制粘贴 */
+export async function apiRefreshCookieFromChrome(): Promise<ImportCookieResult> {
+  return j(await fetch(`${BASE}/api/refresh_cookie_from_chrome`, { method: 'POST' }))
 }
 
 export interface CookieItem { name: string; value: string; domain: string }

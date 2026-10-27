@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { apiLoginStatus, apiQrcode } from '../api'
+import { apiLoginStatus, apiQrcode, apiRefreshCookieFromChrome } from '../api'
 import { appState, toast } from '../store'
 
 const props = defineProps<{ open: boolean }>()
@@ -11,6 +11,38 @@ const checking = ref(false)
 const guide = ref('')
 const guideOk = ref(false)
 const qrError = ref('')
+
+const autoReading = ref(false)
+const autoMsg = ref('')
+
+// 方案 A：直接读日常 Chrome 的 Cookie 库（钥匙串解密），无需手动扫码/复制粘贴
+async function autoReadChrome() {
+  if (autoReading.value) return
+  autoReading.value = true
+  autoMsg.value = ''
+  try {
+    const r = await apiRefreshCookieFromChrome()
+    if (r.ok) {
+      appState.login = { logged_in: true, nickname: r.account || '已登录' }
+      appState.cookieRefreshTick += 1
+      toast(r.note || '已从 Chrome 自动恢复登录态')
+      emit('close')
+    } else if (r.need_auth) {
+      autoMsg.value = '首次使用需要授权：系统已弹出钥匙串授权窗口，请在其中输入密码并点「始终允许」，然后点击下方「我已授权，重试」'
+    } else {
+      autoMsg.value = r.error || '自动读取失败，可改用下方扫码方式'
+    }
+  } catch (e) {
+    autoMsg.value = (e as Error).message || '自动读取失败'
+  } finally {
+    autoReading.value = false
+  }
+}
+
+function retryAutoRead() {
+  autoMsg.value = ''
+  autoReadChrome()
+}
 
 async function openXhs() {
   loading.value = true
@@ -61,9 +93,16 @@ onMounted(openXhs)
     <div class="modal qr-modal">
       <h3>登录小红书</h3>
       <p class="qr-tip">
-        小红书登录态已失效。已在你打开的 Chrome 中打开小红书首页，请直接扫码登录
-        （推荐使用当前演示账号），扫码成功后点击下方按钮确认。
+        小红书登录态已失效。可一键读取本机 Chrome 的登录态恢复（无需复制粘贴）；
+        或改用下方扫码登录。
       </p>
+      <div class="auto-row">
+        <button class="btn auto-btn" @click="autoReadChrome" :disabled="autoReading">
+          {{ autoReading ? '正在读取…' : '一键读取 Chrome 登录态' }}
+        </button>
+        <button v-if="autoMsg && autoMsg.includes('重试')" class="btn auto-retry" @click="retryAutoRead">我已授权，重试</button>
+        <p v-if="autoMsg" class="auto-msg">{{ autoMsg }}</p>
+      </div>
       <div class="qr-stage">
         <div v-if="loading" class="qr-loading">正在打开 Chrome 小红书首页…</div>
         <div v-else-if="guideOk" class="qr-guide">
@@ -91,6 +130,10 @@ onMounted(openXhs)
 <style scoped>
 .qr-modal { width: 380px; text-align: center; }
 .qr-tip { font-size: 13px; color: #666; line-height: 1.6; margin: 8px 0 12px; }
+.auto-row { margin: 0 0 10px; }
+.auto-btn { min-width: 200px; }
+.auto-retry { margin-top: 8px; }
+.auto-msg { font-size: 12px; color: #c0392b; line-height: 1.5; margin-top: 8px; padding: 0 8px; }
 .qr-stage {
   min-height: 200px; display: flex; align-items: center; justify-content: center;
   background: #fff; border: 1px solid #eee; border-radius: 8px; overflow: hidden;

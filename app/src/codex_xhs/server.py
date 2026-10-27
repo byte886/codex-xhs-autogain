@@ -475,6 +475,73 @@ def _parse_cookie_text(text: str) -> list[dict]:
     return out
 
 
+def _save_cookies_file(cookies: list[dict]):
+    """备份旧文件后保存 cookies.json（供 profile 模式启动自动载入）。"""
+    dest = BASE / "data" / "cookies.json"
+    if dest.exists():
+        dest.replace(dest.with_suffix(".json.bak"))
+    dest.write_text(json.dumps(
+        {"cookies": cookies, "imported_at": datetime.datetime.now().isoformat(timespec="seconds")},
+        ensure_ascii=False, indent=2,
+    ))
+
+
+@app.post("/api/refresh_cookie_from_chrome")
+async def refresh_cookie_from_chrome():
+    """方案 A 自动续期：直接读日常 Chrome 的 Cookie 库（钥匙串解密）→ 校验 → 落盘。
+
+    - 已授权：读库 → 过滤小红书 cookie → 转文本 → 走与手动导入相同的校验/保存链路；
+    - 未授权（首次）：读取会触发系统钥匙串授权弹窗，返回 need_auth=True 引导用户点「始终允许」；
+    - Chrome 库缺失 / 未登录小红书：返回可读错误，前端引导扫码或手动导入。
+    """
+    from codex_xhs import browser_client, cookie_reader
+
+    try:
+        chrome_cookies = cookie_reader.read_chrome_cookies()
+    except cookie_reader.ChromeCookieReadError as e:
+        status = cookie_reader.keychain_status()
+        if status == "pending":
+            return {
+                "ok": False,
+                "need_auth": True,
+                "error": "首次自动读取需要授权：请在弹出的系统钥匙串窗口中输入密码并点「始终允许」，然后重试。",
+            }
+        return {"ok": False, "need_auth": False, "error": f"读取 Chrome 登录态失败：{str(e)[:120]}"}
+
+    if not chrome_cookies:
+        return {"ok": False, "need_auth": False,
+                "error": "Chrome 中未找到小红书 Cookie（可能未在小红书网页版登录），请先登录或手动导入 Cookie。"}
+
+    cookies = _parse_cookie_text(cookie_reader.cookies_to_text(chrome_cookies))
+    if not cookies:
+        return {"ok": False, "need_auth": False, "error": "从 Chrome 解析 Cookie 失败"}
+
+    try:
+        r = await browser_client.verify_cookies(cookies)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"校验失败（独立浏览器未就绪）：{str(e)[:100]}")
+
+    if not r.get("logged_in"):
+        return {
+            "ok": False,
+            "valid": False,
+            "error": "Chrome 中的 Cookie 无效或已过期（登录态检测未通过）。请去 Chrome 扫码登录后重试，或手动导入 Cookie。",
+            "count": len(cookies),
+            "raw": f"url={r.get('url')} hasLoginUi={r.get('hasLoginUi')}",
+        }
+
+    _save_cookies_file(cookies)
+    ws = next((c["value"] for c in cookies if c["name"] == "web_session"), "")
+    return {
+        "ok": True,
+        "valid": True,
+        "count": len(cookies),
+        "account": (ws[:8] + "…") if ws else "已登录",
+        "source": "chrome",
+        "note": "已自动从 Chrome 读取登录态并保存（方案 A：钥匙串解密，无 CDP 依赖）。",
+    }
+
+
 @app.post("/api/import_cookie")
 async def import_cookie(req: ImportCookieReq):
     """导入 Cookie（新架构）：解析 → 注入独立 profile Chrome 校验登录态 → 有效则保存到本地。
@@ -507,10 +574,7 @@ async def import_cookie(req: ImportCookieReq):
         }
 
     # 有效：备份旧文件后保存（供 profile 模式启动自动载入）
-    dest = BASE / "data" / "cookies.json"
-    if dest.exists():
-        dest.replace(dest.with_suffix(".json.bak"))
-    dest.write_text(json.dumps({"cookies": cookies, "imported_at": datetime.datetime.now().isoformat(timespec="seconds")}, ensure_ascii=False, indent=2))
+    _save_cookies_file(cookies)
     ws = next((c["value"] for c in cookies if c["name"] == "web_session"), "")
     return {
         "ok": True,
