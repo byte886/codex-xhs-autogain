@@ -288,6 +288,9 @@ def _cleanup_orphan_images() -> int:
     for f in IMAGES_DIR.iterdir():
         if not f.is_file():
             continue
+        # 用户发布页「追加图片」上传的资产（user_ 前缀）属于用户主动操作产物，永不自动清理
+        if f.name.startswith("user_"):
+            continue
         feed_id = f.name.split("_", 1)[0] if "_" in f.name else f.stem
         if feed_id in ids:
             continue
