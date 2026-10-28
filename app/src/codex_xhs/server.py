@@ -1072,13 +1072,19 @@ class CloneReq(BaseModel):
 
 @app.post("/api/clone")
 async def clone(req: CloneReq):
-    """克隆：取详情 → 下载图片到 images → 返回可编辑载荷。"""
+    """克隆：取详情 → 下载图片到 images → 返回可编辑载荷。
+
+    视频笔记不支持克隆（克隆=提取图文编辑发布；视频需下载原视频+视频上传通道，属 P 待办）。
+    前端已置灰拦截，此处后端同口径 400，防绕过。
+    """
     await _require_login()
     con = _db()
     r = con.execute("SELECT * FROM notes WHERE feed_id=?", (req.feed_id,)).fetchone()
     if not r:
         raise HTTPException(404, "笔记不存在")
     n = dict(r)
+    if (n.get("note_type") or "").lower() == "video":
+        raise HTTPException(400, "视频笔记暂不支持一键克隆（视频克隆为待办，需下载原视频+视频上传通道）")
 
     images = await _collect_images(n, req.feed_id)
     detail_ok = len(images) > 0

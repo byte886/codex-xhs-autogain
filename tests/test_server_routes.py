@@ -364,6 +364,19 @@ class TestClone:
         j = r.json()
         assert j["detail_ok"] is False  # 无详情图片，detail_ok=False
 
+    def test_clone_video_blocked(self, client, tmp_path):
+        """视频笔记克隆拦截：前后端口径一致（视频克隆=待办，需下载原视频+上传通道）。"""
+        con = sqlite3.connect(tmp_path / "test.db")
+        server._init_tables(con)
+        now = datetime.datetime.now().isoformat(timespec="seconds")
+        _rank_and_insert(con, {"feed_id": "v1", "title": "视频笔记", "liked_count": "100",
+                               "fans_count": "1000", "type": "video"}, "翡翠", now)
+        con.commit()
+        con.close()
+        r = client.post("/api/clone", json={"feed_id": "v1"})
+        assert r.status_code == 400
+        assert "视频" in r.json()["detail"]
+
 
 class TestCollectClients:
     def test_clients_ok(self, client, monkeypatch, tmp_path):
