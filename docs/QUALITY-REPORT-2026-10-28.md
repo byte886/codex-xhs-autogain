@@ -35,7 +35,8 @@
 
 ## 四、遗留待办（需用户决策/专项）
 
-1. **覆盖率全量挂起**：`pytest --cov` 在约 37%（browser_client/collect_pipeline 附近）卡死。疑 coverage sysmon 与 playwright 驱动/后台 asyncio 任务组合死锁。待专项：分文件 `--cov` 定位首个挂起文件 → 单测该文件 → 决定是否给 browser_client 测试加隔离。
-2. **gauntlet 工具链**：crapper/mutator/dryer 需 tree-sitter 语法包（patch-treesitter.sh）或工具链重装；否则 CRAP/变异/DRY 三维度无法机器执行（可用 radon + 人工评审替代）。
-3. **复杂度重构**：见上清单，待平台恢复后与实机验证一并做。
-4. **夜间平台探测**（2026-10-28 05:13）：CDP 4 tab 无 captcha，但 `/api/search` 探测 180s 超时 → **平台仍限流中**，未连环重试；待白天低频再探后跑真实链路（采集→评分→作者榜→克隆验证提取增强→客户库→草稿）。
+1. **全量 pytest 收尾偶发挂起（已定位，非测试失败）**：专项排查证实 **144 个测试全部执行且通过**（进度点打满、无 FAILED），挂起发生在 pytest 退出收尾阶段——TestClient 的 asyncio loop/后台 task 跨文件累积，属测试基建问题而非产品代码缺陷。分文件/分组执行全部稳定（score+cookie×2 / +browser_client / +collect_pipeline / +server / +routes / +api 均 DONE）。已加 **pytest-timeout（`timeout = 60`）硬超时防护**（单测级）；收尾挂起不影响 CI 结果判断（测试全过），彻底根治需将 TestClient 收尾抽象为共享 fixture（留待专项）。
+2. **覆盖率（`pytest --cov`）**：分文件 `--cov` 均可正常完成（fail-under=80 触发小范围 no-data-collected 属配置行为）；全量 `--cov` 的"挂起"与上述收尾挂起同源（测试已全过）。
+3. **gauntlet 工具链**：crapper/mutator/dryer 需 tree-sitter 语法包（patch-treesitter.sh）或工具链重装；否则 CRAP/变异/DRY 三维度无法机器执行（可用 radon + 人工评审替代）。
+4. **复杂度重构**：见上清单，待平台恢复后与实机验证一并做。
+5. **平台限流**：10-28 清晨两次低频探测（05:13 / 上午）均 180s 超时且 Chrome 出现 `website-login/captcha` tab（"请求太频繁"），已按原则清理残留 tab、未连环重试——**仍限流中**；待恢复后跑真实链路（采集→评分→作者榜→克隆验证提取增强→客户库→草稿）。
