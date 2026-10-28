@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { appState, coverProxy, setStage, toast } from '../store'
-import { apiClone, apiPublish, apiSaveDraft, apiUploadImage, apiDrafts, apiDraftDelete } from '../api'
+import { apiClone, apiPublish, apiSaveDraft, apiUploadImage, apiDrafts, apiDraftDelete, apiGetLLMConfig, apiSetLLMConfig, apiTestLLM, apiAiGenerate } from '../api'
 import type { DraftItem } from '../api'
 import type { Note } from '../types'
 
@@ -179,6 +179,76 @@ async function saveDraft() {
   }
 }
 
+// ---- O1 AI 文稿（Key 门控：未配置时按钮灰态 + 后端 400） ----
+const aiCfg = ref<{ configured: boolean; openai_base_url: string; default_model: string; llm_api_key_masked: string }>()
+const aiSettingsOpen = ref(false)
+const aiBusy = ref('')
+const aiForm = reactive({ api_key: '', openai_base_url: '', default_model: '' })
+
+async function loadAiCfg() {
+  try {
+    aiCfg.value = await apiGetLLMConfig()
+  } catch {
+    aiCfg.value = { configured: false, openai_base_url: '', default_model: '', llm_api_key_masked: '' }
+  }
+}
+loadAiCfg()
+
+function openAiSettings() {
+  aiForm.api_key = ''
+  aiForm.openai_base_url = aiCfg.value?.openai_base_url || ''
+  aiForm.default_model = aiCfg.value?.default_model || ''
+  aiSettingsOpen.value = true
+}
+
+async function saveAiConfig() {
+  if (!aiForm.openai_base_url || !aiForm.default_model) {
+    toast('请填写 Base URL 与模型名称')
+    return
+  }
+  try {
+    await apiSetLLMConfig({ ...aiForm })
+    aiSettingsOpen.value = false
+    await loadAiCfg()
+    toast('AI 配置已保存')
+  } catch (e) {
+    toast(`保存失败：${(e as Error).message}`)
+  }
+}
+
+async function testAiConfig() {
+  try {
+    const r = await apiTestLLM({ ...aiForm })
+    if (r.ok) {
+      const extra = r.model_available === false ? '（模型不在清单，可忽略）' : ''
+      toast(`连接成功：可用模型 ${r.count ?? 0} 个${extra}`)
+    } else {
+      toast(`测试失败：${r.error || '未知原因'}`)
+    }
+  } catch (e) {
+    toast(`测试失败：${(e as Error).message}`)
+  }
+}
+
+async function aiRun(action: string) {
+  if (!aiCfg.value?.configured) {
+    toast('未配置 AI 模型：请先点「AI 设置」配置 API Key / Base URL / 模型')
+    return
+  }
+  aiBusy.value = action
+  try {
+    const r = await apiAiGenerate(action, { title: title.value, desc: body.value })
+    if (action === 'title_summarize' || action === 'title_rewrite') title.value = (r.result || '').slice(0, 50)
+    else if (action === 'tags') tags.value = r.result || ''
+    else body.value = (r.result || '').slice(0, 1000)
+    toast('已生成，可继续编辑')
+  } catch (e) {
+    toast(`AI 生成失败：${(e as Error).message}`)
+  } finally {
+    aiBusy.value = ''
+  }
+}
+
 async function publish() {
   publishing.value = true
   try {
@@ -213,6 +283,27 @@ async function publish() {
       <h2>发布笔记</h2>
       <div v-if="loading" style="text-align:center;padding:30px;color:var(--ink-2)">正在拉取笔记内容…</div>
       <template v-else>
+        <div class="ai-bar">
+          <span class="ai-tag" :class="{ off: !aiCfg?.configured }">AI</span>
+          <button class="ai-btn" :disabled="!aiCfg?.configured || !!aiBusy" @click="aiRun('title_rewrite')">{{ aiBusy === 'title_rewrite' ? '…' : 'AI 改写标题' }}</button>
+          <button class="ai-btn" :disabled="!aiCfg?.configured || !!aiBusy" @click="aiRun('body_create')">{{ aiBusy === 'body_create' ? '…' : 'AI 创作正文' }}</button>
+          <button class="ai-btn" :disabled="!aiCfg?.configured || !!aiBusy" @click="aiRun('body_rewrite')">{{ aiBusy === 'body_rewrite' ? '…' : 'AI 改写正文' }}</button>
+          <button class="ai-btn" :disabled="!aiCfg?.configured || !!aiBusy" @click="aiRun('tags')">{{ aiBusy === 'tags' ? '…' : 'AI 提取标签' }}</button>
+          <button class="ai-btn ghost" @click="openAiSettings">AI 设置{{ aiCfg?.configured ? '' : '（未配置）' }}</button>
+        </div>
+        <div v-if="aiSettingsOpen" class="ai-settings">
+          <label>API Key <span class="limit">{{ aiCfg?.llm_api_key_masked ? '已配置 ' + aiCfg.llm_api_key_masked + '（留空保留）' : '必填' }}</span></label>
+          <input v-model="aiForm.api_key" type="password" placeholder="sk-..." style="width:100%" />
+          <label>Base URL（OpenAI 兼容端点）</label>
+          <input v-model="aiForm.openai_base_url" placeholder="https://api.openai.com/v1" style="width:100%" />
+          <label>模型名称</label>
+          <input v-model="aiForm.default_model" placeholder="gpt-4o-mini / deepseek-chat / claude-…" style="width:100%" />
+          <div class="ai-settings-actions">
+            <button class="ai-btn" @click="testAiConfig">测试连接</button>
+            <button class="ai-btn primary" @click="saveAiConfig">保存</button>
+          </div>
+          <p class="ai-hint">兼容 OpenAI / DeepSeek / 通义 / 中转站 / Claude（base_url 填 api.anthropic.com/v1 + Claude 模型名）</p>
+        </div>
         <div class="pub-field">
           <label>标题 <span class="limit">{{ tCount }}/50</span></label>
           <input v-model="title" maxlength="50" style="width:100%" />

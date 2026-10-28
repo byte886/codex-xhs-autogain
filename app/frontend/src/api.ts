@@ -210,3 +210,46 @@ export async function apiCdpOpenInspect(): Promise<{ ok: boolean; note?: string 
 export async function apiCdpPickChrome(): Promise<{ ok: boolean; chrome_path?: string; note?: string }> {
   return j(await fetch(`${BASE}/api/cdp_pick_chrome`, { method: 'POST' }))
 }
+
+// ---- O1 AI 模块（Key 门控） ----
+export interface LlmConfig {
+  configured: boolean
+  openai_base_url: string
+  default_model: string
+  llm_api_key_masked: string
+  updated_at: string
+}
+
+export interface LlmConfigInput {
+  api_key: string
+  openai_base_url: string
+  default_model: string
+}
+
+export async function apiGetLLMConfig(): Promise<LlmConfig> {
+  return j(await fetch(`${BASE}/api/llm_config`))
+}
+
+export async function apiSetLLMConfig(p: LlmConfigInput): Promise<LlmConfig> {
+  return j(await fetch(`${BASE}/api/llm_config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(p),
+  }))
+}
+
+export async function apiTestLLM(p: LlmConfigInput): Promise<{ ok: boolean; error?: string; count?: number; models?: string[]; model_available?: boolean | null }> {
+  return j(await fetch(`${BASE}/api/llm_test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(p),
+  }))
+}
+
+export async function apiAiGenerate(action: string, note: Record<string, string>): Promise<{ ok: boolean; action: string; result: string }> {
+  return j(await fetch(`${BASE}/api/ai_generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, note }),
+  }))
+}
