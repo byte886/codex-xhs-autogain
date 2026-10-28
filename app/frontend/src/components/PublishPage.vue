@@ -467,7 +467,7 @@ async function aiRun(action: string) {
         </div>
         <div v-if="videoFile" class="video-bar">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="4" y="6" width="16" height="12" rx="2" stroke="#c7741e" /><path d="M10 9.5v5l4-2.5z" fill="#c7741e" /></svg>
-          <b>原视频已下载</b>（{{ videoFile }}）——视频发布上传通道为 P 级待办，当前可编辑标题/正文/存草稿，发布时按提示手动上传视频。
+          <b>原视频已下载</b>（{{ videoFile }}）——发布时在小红书发布页手动选择该本地视频文件上传即可（与正常发视频笔记一致，无需额外上传通道）。
         </div>
         <div class="check-note">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#888" /><path d="M12 8v5M12 16.5v.01" stroke="#888" stroke-width="2" /></svg>
