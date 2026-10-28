@@ -84,6 +84,7 @@ type CloneTarget = Note | { feed_id: string; title: string; desc: string; images
 async function openFor(note: CloneTarget) {
   loading.value = true
   feedId.value = note.feed_id || ''
+  aiKeyword.value = ('keyword' in note ? (note as Note).keyword : '') || ''  // 记录来源关键词，AI 生成按品类对齐
   try {
     if ('images' in note && note.images) {
       // 已有克隆载荷：直接填充（去重）
@@ -276,6 +277,7 @@ async function saveDraft() {
 // ---- O1 AI 文稿（Key 门控：未配置时按钮灰态 + 后端 400；配置入口收敛到「设置」Tab） ----
 const aiCfg = ref<{ configured: boolean; openai_base_url: string; default_model: string; llm_api_key_masked: string }>()
 const aiBusy = ref('')
+const aiKeyword = ref('')  // 来源笔记的搜索关键词（openFor 记录），AI 生成时按品类/行业对齐
 
 async function loadAiCfg() {
   try {
@@ -297,7 +299,7 @@ async function aiRun(action: string) {
   }
   aiBusy.value = action
   try {
-    const r = await apiAiGenerate(action, { title: title.value, desc: body.value })
+    const r = await apiAiGenerate(action, { title: title.value, desc: body.value, keyword: aiKeyword.value })
     if (action === 'title_summarize' || action === 'title_rewrite') title.value = (r.result || '').slice(0, 50)
     else if (action === 'tags') tags.value = r.result || ''
     else body.value = (r.result || '').slice(0, 1000)
@@ -326,6 +328,7 @@ async function aiRun(action: string) {
       <template v-else>
         <div class="ai-bar">
           <span class="ai-tag" :class="{ off: !aiCfg?.configured }">AI</span>
+          <button class="ai-btn" :disabled="!aiCfg?.configured || !!aiBusy" @click="aiRun('title_summarize')">{{ aiBusy === 'title_summarize' ? '…' : 'AI 提炼标题' }}</button>
           <button class="ai-btn" :disabled="!aiCfg?.configured || !!aiBusy" @click="aiRun('title_rewrite')">{{ aiBusy === 'title_rewrite' ? '…' : 'AI 改写标题' }}</button>
           <button class="ai-btn" :disabled="!aiCfg?.configured || !!aiBusy" @click="aiRun('body_create')">{{ aiBusy === 'body_create' ? '…' : 'AI 创作正文' }}</button>
           <button class="ai-btn" :disabled="!aiCfg?.configured || !!aiBusy" @click="aiRun('body_rewrite')">{{ aiBusy === 'body_rewrite' ? '…' : 'AI 改写正文' }}</button>
