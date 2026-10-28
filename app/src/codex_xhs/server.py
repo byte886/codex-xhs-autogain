@@ -1642,6 +1642,56 @@ async def test_llm(req: LLMConfigReq):
     return await llm_service.test_with_saved(req.api_key, req.openai_base_url, req.default_model)
 
 
+# ================= O1 账号人设（AI 生成口吻；v1.5 设置页三卡之一） =================
+# 存储：data/persona.json（本地明文，与 llm_config.json 同级信任域）。
+PERSONA_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "persona.json"
+
+
+class PersonaReq(BaseModel):
+    industry: str = ""
+    tone: str = ""
+    topics: str = ""
+
+
+def _load_persona() -> dict:
+    try:
+        return json.loads(PERSONA_PATH.read_text(encoding="utf8"))
+    except Exception:
+        return {}
+
+
+def _save_persona(d: dict) -> dict:
+    PERSONA_PATH.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf8")
+    return d
+
+
+@app.get("/api/persona")
+def get_persona():
+    """读取账号人设（行业 / 口吻 / 常发主题），未配置返回空串。"""
+    p = _load_persona()
+    return {
+        "ok": True,
+        "industry": p.get("industry", ""),
+        "tone": p.get("tone", ""),
+        "topics": p.get("topics", ""),
+        "updated_at": p.get("updated_at", ""),
+    }
+
+
+@app.post("/api/persona")
+def set_persona(req: PersonaReq):
+    """保存账号人设。空字段保留原值（前端可不重复提交）。"""
+    old = _load_persona()
+    cur = {
+        "industry": req.industry if req.industry.strip() else old.get("industry", ""),
+        "tone": req.tone if req.tone.strip() else old.get("tone", ""),
+        "topics": req.topics if req.topics.strip() else old.get("topics", ""),
+        "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
+    _save_persona(cur)
+    return {"ok": True, **cur}
+
+
 class AIGenReq(BaseModel):
     action: str = ""          # title_summarize / title_rewrite / body_create / body_rewrite / tags
     note: dict = {}           # {title, desc, keyword} 原笔记信息
