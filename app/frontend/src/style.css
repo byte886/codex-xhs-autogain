@@ -374,6 +374,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(255, 36, 66,
 .qc-badge { font-size: 11px; font-weight: 600; border-radius: 6px; padding: 2px 8px; }
 .qc-badge.ok { background: #F2FBF5; color: #1a7f4c; border: 1px solid #BFE8D0; }
 .qc-badge.warn { background: #FFF7E6; color: #B45409; border: 1px solid #FFE2B8; }
+.qc-badge.idle { background: #F5F6F7; color: #888; border: 1px solid #E3E5E8; }
 .qc-toggle { font-size: 11px; color: #aaa; font-weight: 500; }
 .qc-body { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 @media (max-width: 900px) { .qc-body { grid-template-columns: 1fr; } }

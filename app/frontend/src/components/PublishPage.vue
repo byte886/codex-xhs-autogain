@@ -169,7 +169,7 @@ function back() {
 const Q_ABS_WORDS = ['最好', '最全', '最强', '第一名', '唯一', '全网第一', '国家级', '百分百', '100%', '绝对有效', '顶级', '极致', '最佳', '无敌', '根治', '治愈', '疗效', '永不反弹']
 const Q_DRAIN_WORDS = ['微信', 'vx', 'v信', '薇信', '溦信', '威信', '加我', '电话', '手机号', 'qq', 'QQ', '邮箱', '二维码', '私聊', '主页有', '扣扣', 'v我', 'v 我']
 const qcOpen = ref(false)
-const qcResult = ref<{ abs: string[]; drain: string[]; structure: string[] }>({ abs: [], drain: [], structure: [] })
+const qcResult = ref<{ checked: boolean; abs: string[]; drain: string[]; structure: string[] }>({ checked: false, abs: [], drain: [], structure: [] })
 
 function runQC() {
   const titleText = title.value || ''
@@ -185,13 +185,19 @@ function runQC() {
   if (bodyText.trim().length < 50) structure.push('正文过短（建议 ≥50 字，含分段）')
   if (bodyText.trim() && !/[\n\r]/.test(bodyText.trim())) structure.push('正文无分段（建议 3 段式：痛点 → 干货 → 引导）')
   if (!images.value.length) structure.push('未添加图片（图文笔记建议 ≥1 张）')
-  qcResult.value = { abs, drain, structure }
+  qcResult.value = { checked: true, abs, drain, structure }
   return { abs, drain, structure }
+}
+
+/** 展开质检面板时用当前表单值实时检查（发布时还会再跑一次强确认） */
+function toggleQC() {
+  qcOpen.value = !qcOpen.value
+  if (qcOpen.value) runQC()
 }
 
 const qcPassed = computed(() => {
   const r = qcResult.value
-  return r.abs.length === 0 && r.drain.length === 0 && r.structure.length === 0
+  return r.checked && r.abs.length === 0 && r.drain.length === 0 && r.structure.length === 0
 })
 
 async function publish() {
@@ -314,10 +320,11 @@ async function aiRun(action: string) {
         </div>
         <!-- F9 发布前质检（折叠；发布按钮自动跑 + 高风险强确认） -->
         <div class="qc-card">
-          <div class="qc-head" @click="qcOpen = !qcOpen">
+          <div class="qc-head" @click="toggleQC">
             <span class="qc-title">
               🔍 发布前质检
-              <span v-if="qcPassed" class="qc-badge ok">无风险项</span>
+              <span v-if="!qcResult.checked" class="qc-badge idle">未检查（点开即查）</span>
+              <span v-else-if="qcPassed" class="qc-badge ok">无风险项</span>
               <span v-else class="qc-badge warn">{{ qcResult.abs.length + qcResult.drain.length + qcResult.structure.length }} 项提醒</span>
             </span>
             <span class="qc-toggle">{{ qcOpen ? '收起 ▲' : '展开 ▼' }}</span>
