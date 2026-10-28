@@ -1519,6 +1519,37 @@ def img_proxy(path: str = ""):
     return Response(f.read_bytes(), media_type="image/jpeg")
 
 
+# ================= O1 AI 模块：LLM 配置与生成（Key 门控） =================
+# 设计定稿 §3.1：未配置 Key 时前端 AI 按钮灰态、后端 AI 接口 400 拒绝。
+from codex_xhs import llm_service  # noqa: E402
+
+
+class LLMConfigReq(BaseModel):
+    api_key: str = ""
+    openai_base_url: str = ""
+    default_model: str = ""
+
+
+@app.get("/api/llm_config")
+def get_llm_config():
+    """读取 AI 配置（key 掩码，不泄露明文）。"""
+    return llm_service.public_config()
+
+
+@app.post("/api/llm_config")
+def set_llm_config(req: LLMConfigReq):
+    """保存 AI 配置。api_key 为空时保留旧 key（前端可不回传明文）。"""
+    if not req.openai_base_url or not req.default_model:
+        raise HTTPException(400, "请填写 Base URL 与模型名称")
+    return llm_service.save_config(req.api_key, req.openai_base_url, req.default_model)
+
+
+@app.post("/api/llm_test")
+async def test_llm(req: LLMConfigReq):
+    """测试 LLM 连接：用当前表单值（或已存配置）GET /models 验证可用性。"""
+    return await llm_service.test_with_saved(req.api_key, req.openai_base_url, req.default_model)
+
+
 # ================= 静态前端 =================
 app.mount("/assets", StaticFiles(directory=str(WEB_DIR / "assets")), name="assets")
 # 本地封面图静态服务（xhscdn 图床按 Referer 防盗链，本地代理同源访问无 403）
