@@ -4,7 +4,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { refreshSysStatus, toast } from '../store'
 import {
-  apiGetLLMConfig, apiSetLLMConfig, apiTestLLM,
+  apiGetLLMConfig, apiSetLLMConfig, apiClearLLMConfig, apiTestLLM,
   apiCdpStatus, apiCdpSetup, apiCdpOpenInspect, apiCdpPickChrome,
 } from '../api'
 
@@ -39,6 +39,21 @@ async function saveAi() {
     toast('AI 配置已保存')
   } catch (e) {
     toast(`保存失败：${(e as Error).message}`)
+  } finally {
+    aiSaving.value = false
+  }
+}
+async function clearAi() {
+  // 显式清除已配置 Key/Base/模型（空 key 保存=保留是保护设计，清除走独立接口）
+  // 可逆低风险操作（重新配置即可），直接执行 + toast 提示，不用原生 confirm（CDP 自动化/跨平台兼容问题）
+  aiSaving.value = true
+  try {
+    await apiClearLLMConfig()
+    await loadAi()
+    fillAiForm()
+    toast('AI 配置已清除（可随时重新配置）')
+  } catch (e) {
+    toast(`清除失败：${(e as Error).message}`)
   } finally {
     aiSaving.value = false
   }
@@ -165,6 +180,7 @@ onMounted(async () => {
         <div class="set-actions">
           <button class="btn" @click="testAi">测试连接</button>
           <button class="btn primary" :disabled="aiSaving" @click="saveAi">{{ aiSaving ? '保存中…' : '保存配置' }}</button>
+          <button v-if="aiCfg?.configured" class="btn danger" :disabled="aiSaving" @click="clearAi">清除配置</button>
         </div>
         <div class="gate-msg" :class="{ ok: aiCfg?.configured }">
           {{ aiCfg?.configured ? '✅ 已配置 AI 模型 —— 文稿生成 / 发布前质检可用' : '⚠ 当前未配置 AI 模型 —— AI 功能处于灰态' }}

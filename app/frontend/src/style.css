@@ -233,6 +233,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(255, 36, 66,
 .pub-btns button { padding: 11px 18px; border-radius: 8px; font-size: 14px; font-weight: 600; }
 .btn-back, .btn-draft { border: 1px solid var(--line); background: #fff; }
 .btn-pub { background: var(--red); color: #fff; margin-left: auto; }
+.btn.danger { border: 1px solid #E51F3A; color: #E51F3A; background: #fff; }
+.btn.danger:hover { background: #FFF1F3; }
 
 /* O1 AI 文稿工具条（Key 门控：未配置灰态） */
 .ai-bar { display: flex; align-items: center; gap: 8px; margin: 4px 0 14px; flex-wrap: wrap; }

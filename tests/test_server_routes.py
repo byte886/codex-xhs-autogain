@@ -24,6 +24,13 @@ def client(monkeypatch, tmp_path):
     async def fake_cleanup_tabs():
         return None
 
+    # 真实登录链路（目标 Chrome Cookie 库 + 日常 Chrome 钥匙串恢复）由 test_real_login.py 专门覆盖；
+    # 本模块纯逻辑验证一律 mock 为已登录，不依赖真实浏览器/钥匙串（Chrome 运行中 Cookie 库被锁或
+    # pytest 进程无钥匙串授权都会导致 403 误报——见 10-29 E1 回归修复记录）。
+    async def fake_real_login():
+        return {"ok": True, "code": "test_mock", "note": "fixture mock 已登录"}
+
+    monkeypatch.setattr(server, "_require_real_login", fake_real_login)
     monkeypatch.setattr(browser_client, "cleanup_tabs", fake_cleanup_tabs)
     monkeypatch.setattr(server, "_cleanup_orphan_images", lambda: 0)
     monkeypatch.setattr(server, "_startup_cleanup", lambda: None)

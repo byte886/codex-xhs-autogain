@@ -258,6 +258,10 @@ export async function apiSetLLMConfig(p: LlmConfigInput): Promise<LlmConfig> {
   }))
 }
 
+export async function apiClearLLMConfig(): Promise<LlmConfig> {
+  return j(await fetch(`${BASE}/api/llm_config/clear`, { method: 'POST' }))
+}
+
 export async function apiTestLLM(p: LlmConfigInput): Promise<{ ok: boolean; error?: string; count?: number; models?: string[]; model_available?: boolean | null }> {
   return j(await fetch(`${BASE}/api/llm_test`, {
     method: 'POST',

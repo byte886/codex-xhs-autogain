@@ -74,6 +74,27 @@ def test_test_with_saved_incomplete(llm_cfg):
     assert r["ok"] is False and "未填写完整" in r["error"]
 
 
+def test_clear_config_returns_unconfigured(llm_cfg):
+    """clear_config：Key/Base/模型全清，回到未配置态。"""
+    llm_service.save_config("sk-abc12345", "https://api.openai.com/v1", "gpt-4o-mini")
+    cfg = llm_service.clear_config()
+    assert cfg["configured"] is False
+    assert cfg["llm_api_key_masked"] == ""
+    raw = llm_service._load()  # noqa: SLF001
+    assert raw["llm_api_key"] == ""
+    assert raw["openai_base_url"] == ""
+
+
+def test_clear_after_save_keep_old_key_flow(llm_cfg):
+    """完整链路：保存→空key保存保留→显式清除→未配置（无残留）。"""
+    llm_service.save_config("sk-keepme", "https://api.openai.com/v1", "gpt-4o-mini")
+    llm_service.save_config("", "https://api.deepseek.com/v1", "deepseek-chat")  # 空 key 保留旧 key
+    assert llm_service._load()["llm_api_key"] == "sk-keepme"  # noqa: SLF001
+    llm_service.clear_config()
+    assert llm_service.enabled() is False
+    assert llm_service._load()["llm_api_key"] == ""  # noqa: SLF001
+
+
 # ---- 路由接线 ----
 def test_routes_llm_config(llm_cfg, monkeypatch):
     monkeypatch.setattr(server, "llm_service", llm_service)
@@ -86,6 +107,19 @@ def test_routes_llm_config(llm_cfg, monkeypatch):
 
     r = c.get("/api/llm_config")
     assert "sk-abc" not in r.json()["llm_api_key_masked"]
+
+
+def test_routes_llm_config_clear(llm_cfg, monkeypatch):
+    """POST /api/llm_config/clear → 未配置态；清除后保存功能仍可用。"""
+    monkeypatch.setattr(server, "llm_service", llm_service)
+    c = TestClient(server.app)
+    c.post("/api/llm_config", json={"api_key": "sk-xyz", "openai_base_url": "https://api.openai.com/v1", "default_model": "gpt-4o-mini"})
+    r = c.post("/api/llm_config/clear")
+    assert r.status_code == 200 and r.json()["configured"] is False
+    assert r.json()["llm_api_key_masked"] == ""
+    # 清除后可重新保存
+    r2 = c.post("/api/llm_config", json={"api_key": "sk-new", "openai_base_url": "https://api.deepseek.com/v1", "default_model": "deepseek-chat"})
+    assert r2.status_code == 200 and r2.json()["configured"] is True
 
 
 def test_routes_llm_test_unconfigured(llm_cfg, monkeypatch):

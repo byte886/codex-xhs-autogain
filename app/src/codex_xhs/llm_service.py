@@ -64,6 +64,22 @@ def save_config(api_key: str, base_url: str, model: str) -> dict:
     return public_config()
 
 
+def clear_config() -> dict:
+    """清除 AI 配置（Key/Base/模型全清），回到未配置态。
+
+    背景：save_config 空 key 保留是保护设计（前端不持久回显明文），
+    但用户换号/换中转站后无法在 UI 移除已配置 Key——本函数提供显式清除语义。
+    """
+    cfg = {
+        "llm_api_key": "",
+        "openai_base_url": "",
+        "default_model": "",
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    _save(cfg)
+    return public_config()
+
+
 def enabled() -> bool:
     """是否已配置（前端据此灰态/放行）。"""
     cfg = _load()

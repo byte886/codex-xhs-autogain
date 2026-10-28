@@ -1904,6 +1904,16 @@ def set_llm_config(req: LLMConfigReq):
     return llm_service.save_config(req.api_key, req.openai_base_url, req.default_model)
 
 
+@app.post("/api/llm_config/clear")
+def clear_llm_config():
+    """清除 AI 配置（Key/Base/模型全清）→ 回到未配置态。
+
+    背景：save_config 空 key 保留（保护明文不回传），但用户换号/换中转站后
+    无法在 UI 移除已配置 Key——本接口提供显式清除语义（E1 场景5 遗留小缺口）。
+    """
+    return llm_service.clear_config()
+
+
 @app.post("/api/llm_test")
 async def test_llm(req: LLMConfigReq):
     """测试 LLM 连接：用当前表单值（或已存配置）GET /models 验证可用性。"""
