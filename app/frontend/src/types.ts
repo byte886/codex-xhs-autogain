@@ -112,6 +112,10 @@ export interface ClonePayload {
   detail_ok: boolean
   /** 本地图片（/app/images/...），优先于外链 images */
   images_local?: string[]
+  /** 视频克隆：原视频本地路径（/videos/...），空=图文笔记 */
+  video_file?: string
+  /** 原视频远端地址（仅展示） */
+  video_url?: string
 }
 
 export interface LoginStatus {

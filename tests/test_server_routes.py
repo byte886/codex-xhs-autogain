@@ -364,8 +364,30 @@ class TestClone:
         j = r.json()
         assert j["detail_ok"] is False  # 无详情图片，detail_ok=False
 
-    def test_clone_video_blocked(self, client, tmp_path):
-        """视频笔记克隆拦截：前后端口径一致（视频克隆=待办，需下载原视频+上传通道）。"""
+    def test_clone_video_downloads(self, client, monkeypatch, tmp_path):
+        """视频笔记克隆：下载原视频到本地（读操作），返回 video_file；上传通道 P 级待办。"""
+        con = sqlite3.connect(tmp_path / "test.db")
+        server._init_tables(con)
+        now = datetime.datetime.now().isoformat(timespec="seconds")
+        _rank_and_insert(con, {"feed_id": "v1", "title": "视频笔记", "liked_count": "100",
+                               "fans_count": "1000", "type": "video",
+                               "video_url": "https://sns-video-hw.xhscdn.com/v1.mp4"}, "翡翠", now)
+        con.commit()
+        con.close()
+        async def fake_collect(n, fid):
+            return []
+
+        monkeypatch.setattr(server, "_collect_images", fake_collect)
+        monkeypatch.setattr(server, "_download_images", lambda fid, imgs: [])
+        monkeypatch.setattr(server, "_download_video", lambda fid, url: "/videos/v1.mp4")
+        r = client.post("/api/clone", json={"feed_id": "v1"})
+        assert r.status_code == 200
+        j = r.json()
+        assert j["video_file"] == "/videos/v1.mp4"
+        assert j["note_type"] == "video"
+
+    def test_clone_video_without_url_fetch_detail(self, client, monkeypatch, tmp_path):
+        """视频笔记缺 video_url（老库）→ 详情页回填后下载。"""
         con = sqlite3.connect(tmp_path / "test.db")
         server._init_tables(con)
         now = datetime.datetime.now().isoformat(timespec="seconds")
@@ -373,9 +395,52 @@ class TestClone:
                                "fans_count": "1000", "type": "video"}, "翡翠", now)
         con.commit()
         con.close()
+        async def fake_collect(n, fid):
+            return []
+
+        monkeypatch.setattr(server, "_collect_images", fake_collect)
+        monkeypatch.setattr(server, "_download_images", lambda fid, imgs: [])
+
+        async def fake_detail(n):
+            n["video_url"] = "https://sns-video-hw.xhscdn.com/v2.mp4"
+            return n
+
+        monkeypatch.setattr(server, "get_feed_detail", fake_detail)
+        monkeypatch.setattr(server, "_download_video", lambda fid, url: "/videos/v1.mp4")
         r = client.post("/api/clone", json={"feed_id": "v1"})
-        assert r.status_code == 400
-        assert "视频" in r.json()["detail"]
+        assert r.status_code == 200
+        assert r.json()["video_file"] == "/videos/v1.mp4"
+
+    def test_download_video_ok(self, client, monkeypatch, tmp_path):
+        """_download_video：真实下载字节 → 返回 /videos/ 代理路径。"""
+        import http.server
+        import threading
+
+        video_bytes = b"\x00\x00\x00\x18ftypmp42fakevideodata" * 200  # >1KB
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(video_bytes)))
+                self.end_headers()
+                self.wfile.write(video_bytes)
+
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        port = srv.server_address[1]
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        monkeypatch.setattr(server, "VIDEOS_DIR", tmp_path / "videos")
+        (tmp_path / "videos").mkdir(exist_ok=True)
+        out = server._download_video("v1", f"http://127.0.0.1:{port}/v.mp4")
+        assert out == "/videos/v1.mp4"
+        assert (tmp_path / "videos" / "v1.mp4").stat().st_size == len(video_bytes)
+        srv.shutdown()
+
+    def test_download_video_empty_url(self, client, monkeypatch, tmp_path):
+        """_download_video：空地址/失败 → 空串（不炸）。"""
+        monkeypatch.setattr(server, "VIDEOS_DIR", tmp_path / "videos")
+        assert server._download_video("v1", "") == ""
 
 
 class TestPublishStats:

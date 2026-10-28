@@ -248,9 +248,8 @@ function fmtPub(ts: string | number | null): string {
         <div class="hover-actions">
           <button
             class="ha-btn clone"
-            :class="{ off: note.note_type === 'video' }"
-            :title="note.note_type === 'video' ? '视频暂不支持克隆' : '一键克隆（抄内容）'"
-            @click.stop="note.note_type === 'video' ? toast('视频笔记暂不支持一键克隆（视频克隆待办中）') : emit('clone', note)"
+            :title="note.note_type === 'video' ? '一键克隆（下载原视频）' : '一键克隆（抄内容）'"
+            @click.stop="emit('clone', note)"
           >一键克隆</button>
           <button class="ha-btn client" title="采集客户（采人）" @click.stop="emit('clients', note)">采集客户</button>
         </div>

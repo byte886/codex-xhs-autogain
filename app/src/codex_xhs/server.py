@@ -91,6 +91,8 @@ def cleanup_images():
 
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+VIDEOS_DIR = BASE / "data" / "videos"
+VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _img_name(feed_id: str, suffix: str = "cover") -> str:
@@ -113,7 +115,8 @@ def _init_tables(con):
             desc TEXT, ip_location TEXT,
             liked_count INTEGER, collected_count INTEGER, comment_count INTEGER,
             shared_count INTEGER, fans_count INTEGER, publish_time INTEGER,
-            score REAL, tag TEXT, fan_ratio REAL, fetched_at TEXT
+            score REAL, tag TEXT, fan_ratio REAL, fetched_at TEXT, score_info TEXT,
+            video_url TEXT
         )
     """)
     con.execute("""
@@ -150,6 +153,11 @@ def _init_tables(con):
     # 评分明细（score_info JSON：4 维度得分，卡片右上角分数可解释）；老库补列
     try:
         con.execute("ALTER TABLE notes ADD COLUMN score_info TEXT")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
+    # 视频克隆：详情页原视频地址（extract.js 提取），供一键克隆下载原视频
+    try:
+        con.execute("ALTER TABLE notes ADD COLUMN video_url TEXT")
     except sqlite3.OperationalError:
         pass  # 列已存在
     # 存草稿（长期保留资产；区别于搜索/采集结果——用完即失效）
@@ -704,7 +712,7 @@ def _rank_and_insert(con, n: dict, keyword: str, now: str) -> bool:
                   "dimensions": {"like_fan_ratio": 0.0, "low_fan": 0.0,
                                  "interaction_health": 0.0, "freshness": 0.0}}
         con.execute(
-            "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 n.get("feed_id"), keyword, n.get("title", ""), n.get("type", ""),
                 n.get("user_id"), n.get("nickname", ""), n.get("avatar", ""),
@@ -714,7 +722,7 @@ def _rank_and_insert(con, n: dict, keyword: str, now: str) -> bool:
                 _to_int(n.get("comment_count")), _to_int(n.get("shared_count")),
                 _to_int(n.get("fans_count")), n.get("publish_time"),
                 si["score"], si["tag"], si["fan_ratio"],
-                json.dumps(si, ensure_ascii=False), now,
+                json.dumps(si, ensure_ascii=False), now, n.get("video_url", ""),
             ),
         )
         return True
@@ -1078,10 +1086,11 @@ class CloneReq(BaseModel):
 
 @app.post("/api/clone")
 async def clone(req: CloneReq):
-    """克隆：取详情 → 下载图片到 images → 返回可编辑载荷。
+    """克隆：取详情 → 下载图片（视频另下载原视频）到本地 → 返回可编辑载荷。
 
-    视频笔记不支持克隆（克隆=提取图文编辑发布；视频需下载原视频+视频上传通道，属 P 待办）。
-    前端已置灰拦截，此处后端同口径 400，防绕过。
+    图文：详情图片列表 → 本地下载 → 可编辑发布。
+    视频：详情原视频下载到本地（读操作，不上传平台）；小红书视频上传通道为 P 级待办，
+    发布时由用户在创作页手动上传/或后续补通道，克隆本身止于「本地拿到原视频」。
     """
     await _require_login()
     con = _db()
@@ -1089,8 +1098,7 @@ async def clone(req: CloneReq):
     if not r:
         raise HTTPException(404, "笔记不存在")
     n = dict(r)
-    if (n.get("note_type") or "").lower() == "video":
-        raise HTTPException(400, "视频笔记暂不支持一键克隆（视频克隆为待办，需下载原视频+视频上传通道）")
+    is_video = (n.get("note_type") or "").lower() == "video"
 
     images = await _collect_images(n, req.feed_id)
     detail_ok = len(images) > 0
@@ -1098,7 +1106,48 @@ async def clone(req: CloneReq):
 
     n["images_local"] = local_images
     n["detail_ok"] = detail_ok
+
+    # 视频克隆：下载原视频到 data/videos（本地，带 Referer 防 403）
+    video_file = ""
+    video_url = (n.get("video_url") or "").strip()
+    if is_video:
+        if not video_url:
+            # 笔记记录未带视频地址（老库/未回写）→ 拉一次详情回填
+            try:
+                dn = await get_feed_detail(n)
+                video_url = (dn.get("video_url") or "").strip()
+                n["video_url"] = video_url
+                con.execute("UPDATE notes SET video_url=? WHERE feed_id=?", (video_url, req.feed_id))
+                con.commit()
+            except Exception:  # noqa: BLE001
+                video_url = ""
+        video_file = _download_video(req.feed_id, video_url)
+        n["video_file"] = video_file
+
     return n
+
+
+def _download_video(feed_id: str, url: str) -> str:
+    """克隆用：下载原视频到 data/videos。返回可访问代理路径（失败/无地址返回空串）。"""
+    if not url:
+        return ""
+    fname = f"{feed_id.replace('#', '_')}.mp4"
+    dest = VIDEOS_DIR / fname
+    try:
+        VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+        if not dest.exists():
+            reqh = urllib.request.Request(
+                url,
+                headers={"Referer": "https://www.xiaohongshu.com/", "User-Agent": "Mozilla/5.0"},
+            )
+            with urllib.request.urlopen(reqh, timeout=60) as resp:
+                dest.write_bytes(resp.read())
+        if dest.exists() and dest.stat().st_size < 1024:
+            dest.unlink()
+            return ""
+        return f"/videos/{fname}"
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 async def _collect_images(n: dict, feed_id: str) -> list:
@@ -1960,6 +2009,8 @@ async def ai_generate(req: AIGenReq):
 app.mount("/assets", StaticFiles(directory=str(WEB_DIR / "assets")), name="assets")
 # 本地封面图静态服务（xhscdn 图床按 Referer 防盗链，本地代理同源访问无 403）
 app.mount("/app/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
+# 本地视频静态服务（视频克隆下载产物，供创作页预览/后续发布上传）
+app.mount("/videos", StaticFiles(directory=str(VIDEOS_DIR)), name="videos")
 
 
 @app.get("/")

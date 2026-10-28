@@ -14,6 +14,8 @@ const visible = ref('公开可见')
 const account = ref('')
 const images = ref<string[]>([])
 const feedId = ref('')
+const videoFile = ref('')  // 视频克隆：原视频本地路径（/videos/...）；空=图文
+const videoUrl = ref('')   // 原视频远端地址（仅展示用）
 const publishing = ref(false)
 const loading = ref(false)
 
@@ -84,6 +86,8 @@ type CloneTarget = Note | { feed_id: string; title: string; desc: string; images
 async function openFor(note: CloneTarget) {
   loading.value = true
   feedId.value = note.feed_id || ''
+  videoFile.value = ''
+  videoUrl.value = ''
   aiKeyword.value = ('keyword' in note ? (note as Note).keyword : '') || ''  // 记录来源关键词，AI 生成按品类对齐
   try {
     if ('images' in note && note.images) {
@@ -105,6 +109,8 @@ async function openFor(note: CloneTarget) {
           else if (p.images?.length) images.value = dedupe(p.images)
           if (p.title) title.value = p.title
           if (p.desc) body.value = p.desc
+          if (p.video_file) videoFile.value = p.video_file
+          if (p.video_url) videoUrl.value = p.video_url
         })
         .catch(() => {
           /* 后台补图失败则保留占位封面，不打断编辑 */
@@ -458,6 +464,10 @@ async function aiRun(action: string) {
               <option disabled>账号 3（未配置）</option>
             </select>
           </div>
+        </div>
+        <div v-if="videoFile" class="video-bar">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="4" y="6" width="16" height="12" rx="2" stroke="#c7741e" /><path d="M10 9.5v5l4-2.5z" fill="#c7741e" /></svg>
+          <b>原视频已下载</b>（{{ videoFile }}）——视频发布上传通道为 P 级待办，当前可编辑标题/正文/存草稿，发布时按提示手动上传视频。
         </div>
         <div class="check-note">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#888" /><path d="M12 8v5M12 16.5v.01" stroke="#888" stroke-width="2" /></svg>

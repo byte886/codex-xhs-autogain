@@ -147,6 +147,8 @@ def _merge_detail_core(note: dict, d: dict) -> None:
     if d.get("author_nick"):
         note["nickname"] = d["author_nick"]
     note["detail_imgs"] = d.get("imgs", [])
+    # 视频原地址（视频克隆下载用；图文笔记恒空）
+    note["video_url"] = d.get("video_url", "")
 
 
 def _merge_detail_interactions(note: dict, d: dict) -> None:
@@ -217,7 +219,9 @@ def init_db(path: Path) -> sqlite3.Connection:
             score REAL,
             tag TEXT,
             fan_ratio REAL,
-            fetched_at TEXT
+            fetched_at TEXT,
+            score_info TEXT,
+            video_url TEXT
         )
     """)
     return con
@@ -237,7 +241,7 @@ def _upsert_note(con: sqlite3.Connection, n: dict, keyword: str, now: str) -> No
     """CLI 落库单条（评分字段来自 n['score_info']）。"""
     si = n["score_info"]
     con.execute(
-        "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             n.get("feed_id"), keyword, n.get("title", ""), n.get("type", ""),
             n.get("user_id"), n.get("nickname", ""), n.get("avatar", ""),
@@ -245,7 +249,8 @@ def _upsert_note(con: sqlite3.Connection, n: dict, keyword: str, now: str) -> No
             _to_int(n.get("liked_count")), _to_int(n.get("collected_count")),
             _to_int(n.get("comment_count")), _to_int(n.get("shared_count")),
             _to_int(n.get("fans_count")), n.get("publish_time"),
-            si["score"], si["tag"], si["fan_ratio"], now,
+            si["score"], si["tag"], si["fan_ratio"],
+            json.dumps(si, ensure_ascii=False), now, n.get("video_url", ""),
         ),
     )
     con.commit()

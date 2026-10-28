@@ -49,6 +49,24 @@ function xhsExtractNoteDetail(root = document) {
   // 绝不使用全文档 [class*="player"] —— 相关推荐流里的视频卡片 class 也含 player，会把图文笔记误判成视频（用户实测 bug）。
   const videoEl = (contentRoot ? contentRoot.querySelector('video, [class*="video-player"]') : null)
     || root.querySelector('video[src], video source[src], meta[property="og:video"], meta[name="og:video"]');
+  // 视频地址：video 元素 src / source src / og:video meta content（供视频克隆下载原视频）
+  let videoUrl = '';
+  try {
+    if (videoEl) {
+      if (videoEl.tagName === 'META') {
+        videoUrl = (videoEl.getAttribute('content') || '').trim();
+      } else if (typeof videoEl.src === 'string') {
+        videoUrl = videoEl.src.trim();
+      } else if (videoEl.querySelector) {
+        const srcEl = videoEl.querySelector('source[src]');
+        if (srcEl) videoUrl = (srcEl.getAttribute('src') || '').trim();
+      }
+    }
+    if (!videoUrl) {
+      const ogVideo = root.querySelector('meta[property="og:video"]');
+      if (ogVideo) videoUrl = (ogVideo.getAttribute('content') || '').trim();
+    }
+  } catch (e) { /* 拿不到视频地址就空 */ }
   // 主图：小红书笔记正文轮播图。官方主图 class 为 note-slider-img（社区爬虫实证：所有笔记图
   // 均含此属性，评论区图/头像/推荐区不含，天然隔离）。仅当主图区为空时，才在正文容器内
   // 兜底找 .swiper-wrapper/.swiper-slide 图（避免抓到评论区/推荐区的轮播图）。
@@ -124,6 +142,7 @@ function xhsExtractNoteDetail(root = document) {
     date: dateEl ? dateEl.innerText.trim() : '',
     imgs,
     type: videoEl ? 'video' : 'note',
+    video_url: videoUrl,
     note_id: noteId,
     user_id: authorUserId,
     author_nick: authorNick,
