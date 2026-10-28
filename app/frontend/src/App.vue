@@ -49,7 +49,11 @@ async function openPublish(note: Note) {
 
 // 单条克隆（对齐视频：克隆走卡片单条，不批量）
 async function cloneOne(note: Note) {
-  // 视频笔记同样走克隆：后端下载原视频到本地（上传发布通道为 P 级待办）
+  // 产品以图文为主：视频仅设计留位，暂不支持一键克隆（后端视频分支保留，未来解锁）
+  if (note.note_type === 'video') {
+    toast('视频笔记暂不支持一键克隆（当前产品以图文为主）')
+    return
+  }
   await openPublish(note)
 }
 
