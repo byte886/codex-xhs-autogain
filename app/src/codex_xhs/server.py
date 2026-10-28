@@ -1700,20 +1700,25 @@ class AIGenReq(BaseModel):
 _AI_PROMPTS = {
     "title_summarize": (
         "你是小红书爆文标题优化师。请把下面的笔记标题提炼成 1 个更吸引人的标题（不超过20字，"
-        "不含标点符号和表情，保留原笔记的核心卖点方向），只输出标题本身，不要任何解释：\n标题：{title}"
+        "不含标点符号和表情，保留原笔记的核心卖点方向）。标题可从这些公式选：数字+人群+结果、"
+        "悬念提问、对比反差、场景共鸣。只输出标题本身，不要任何解释：\n标题：{title}"
     ),
     "title_rewrite": (
         "你是小红书爆文标题优化师。保留原笔记的爆款方向，重写 1 个全新的标题（不超过20字，"
-        "不含标点符号和表情，标题要有钩子、引发好奇或共鸣），只输出标题本身，不要任何解释：\n标题：{title}"
+        "不含标点符号和表情，标题要有钩子、引发好奇或共鸣）。标题可从这些公式选：数字+人群+结果、"
+        "悬念提问、对比反差、场景共鸣。只输出标题本身，不要任何解释：\n标题：{title}"
     ),
     "body_create": (
         "你是小红书爆文作者。参考原笔记的主题方向，创作一篇全新的小红书正文（800-1200字，"
-        "口语化、分段清晰、适当使用emoji、结尾带 3-5 个相关话题标签），只输出正文，不要任何解释：\n"
+        "口语化、分段清晰、适当使用emoji、结尾带 3-5 个相关话题标签）。正文按小红书爆文黄金结构："
+        "①痛点/场景开头（1-2句抓注意力）②干货分点展开（可执行、带数据或对比、每段有小标题感）"
+        "③价值收尾（总结+引导互动）。只输出正文，不要任何解释：\n"
         "原标题：{title}\n原正文：{desc}"
     ),
     "body_rewrite": (
         "你是小红书爆文作者。把下面的正文语义重写一遍（换一种表达方式，保留核心信息与观点，"
-        "口语化、分段清晰、适当使用emoji），只输出重写后的正文，不要任何解释：\n原正文：{desc}"
+        "口语化、分段清晰、适当使用emoji）。保持小红书爆文结构：痛点开头→干货展开→价值收尾，"
+        "避免“微改原句”式的同质化改写。只输出重写后的正文，不要任何解释：\n原正文：{desc}"
     ),
     "tags": (
         "你是小红书话题标签专家。为下面的笔记提取 5 个精准的话题标签（#开头，中文为主，"
@@ -1725,7 +1730,11 @@ _AI_PROMPTS = {
 
 @app.post("/api/ai_generate")
 async def ai_generate(req: AIGenReq):
-    """AI 文稿生成（Key 门控，O1-2）：未配置 LLM 时 400 拒绝（前端按钮灰态+提示）。"""
+    """AI 文稿生成（Key 门控，O1-2 + 质量保障）：未配置 LLM 时 400 拒绝（前端按钮灰态+提示）。
+
+    质量保障：①账号人设（行业/口吻/常发主题，data/persona.json）注入系统提示，保持人设一致；
+    ②爆文黄金结构/标题公式内置于动作提示（_AI_PROMPTS），避免“通用AI味”与平庸文案。
+    """
     if req.action not in _AI_PROMPTS:
         raise HTTPException(400, f"未知 AI 动作：{req.action}")
     title = (req.note.get("title") or "")[:500]
@@ -1733,9 +1742,17 @@ async def ai_generate(req: AIGenReq):
     keyword = (req.note.get("keyword") or "")[:200]
     try:
         prompt = _AI_PROMPTS[req.action].format(title=title, desc=desc, keyword=keyword)
-        result = await llm_service.chat(
-            "你是一个专业的小红书内容创作助手，输出精炼、可直接使用，不要客套。", prompt
-        )
+        # 人设注入：已配置账号人设时拼入系统提示（未配置退化为通用助手，行为不变）
+        persona = _load_persona()
+        system_parts = ["你是一个专业的小红书内容创作助手，输出精炼、可直接使用，不要客套。"]
+        if persona.get("industry") or persona.get("tone") or persona.get("topics"):
+            system_parts.append(
+                "账号人设：行业【{}】、口吻【{}】、常发主题【{}】。生成内容保持该人设一致，"
+                "避免“宝子们/家人们/谁懂啊”式通用AI味。".format(
+                    persona.get("industry", ""), persona.get("tone", ""), persona.get("topics", "")
+                )
+            )
+        result = await llm_service.chat("\n".join(system_parts), prompt)
         return {"ok": True, "action": req.action, "result": result}
     except ValueError as e:  # 未配置 Key / 请求失败 → 400
         raise HTTPException(400, str(e)) from e

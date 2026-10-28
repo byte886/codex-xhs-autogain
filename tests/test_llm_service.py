@@ -128,6 +128,69 @@ def test_ai_generate_success(llm_cfg, monkeypatch):
     assert r.json()["ok"] is True and r.json()["result"] == "翡翠小白避坑指南"
 
 
+# ---- O1-7 AI 文稿质量保障：人设注入 + 爆文模板 ----
+def test_ai_generate_persona_injected(llm_cfg, monkeypatch, tmp_path):
+    """已配置人设 → system prompt 注入行业/口吻/主题。"""
+    llm_service.save_config("sk-k", "https://api.openai.com/v1", "gpt-4o-mini")
+    monkeypatch.setattr(server, "llm_service", llm_service)
+    monkeypatch.setattr(server, "PERSONA_PATH", tmp_path / "persona.json")
+    server._save_persona({"industry": "珠宝翡翠", "tone": "干货型", "topics": "避坑指南、性价比测评"})
+
+    captured = {}
+
+    async def fake_chat(system, user, **kw):
+        captured["system"] = system
+        return "ok"
+
+    monkeypatch.setattr(llm_service, "chat", fake_chat)
+    c = TestClient(server.app)
+    r = c.post("/api/ai_generate", json={"action": "body_create", "note": {"title": "翡翠怎么挑", "desc": "讲透种水"}})
+    assert r.status_code == 200
+    assert "行业【珠宝翡翠】" in captured["system"]
+    assert "口吻【干货型】" in captured["system"]
+    assert "常发主题【避坑指南、性价比测评】" in captured["system"]
+
+
+def test_ai_generate_persona_empty_keeps_default(llm_cfg, monkeypatch, tmp_path):
+    """未配置人设 → system prompt 保持通用助手（行为不变）。"""
+    llm_service.save_config("sk-k", "https://api.openai.com/v1", "gpt-4o-mini")
+    monkeypatch.setattr(server, "llm_service", llm_service)
+    monkeypatch.setattr(server, "PERSONA_PATH", tmp_path / "persona.json")
+
+    captured = {}
+
+    async def fake_chat(system, user, **kw):
+        captured["system"] = system
+        return "ok"
+
+    monkeypatch.setattr(llm_service, "chat", fake_chat)
+    c = TestClient(server.app)
+    r = c.post("/api/ai_generate", json={"action": "title_rewrite", "note": {"title": "翡翠怎么挑"}})
+    assert r.status_code == 200
+    assert "账号人设" not in captured["system"]
+    assert "小红书内容创作助手" in captured["system"]
+
+
+def test_ai_generate_body_prompt_has_golden_structure(llm_cfg, monkeypatch):
+    """body_create 动作提示内置爆文黄金结构（质量保障模板）。"""
+    llm_service.save_config("sk-k", "https://api.openai.com/v1", "gpt-4o-mini")
+    monkeypatch.setattr(server, "llm_service", llm_service)
+
+    captured = {}
+
+    async def fake_chat(system, user, **kw):
+        captured["user"] = user
+        return "ok"
+
+    monkeypatch.setattr(llm_service, "chat", fake_chat)
+    c = TestClient(server.app)
+    r = c.post("/api/ai_generate", json={"action": "body_create", "note": {"title": "翡翠", "desc": "种水干货"}})
+    assert r.status_code == 200
+    assert "黄金结构" in captured["user"]
+    assert "痛点/场景开头" in captured["user"]
+    assert "价值收尾" in captured["user"]
+
+
 class _FakeResp:
     def __init__(self, status_code, json_data):
         self.status_code = status_code

@@ -19,7 +19,11 @@ export async function apiLoginStatus(): Promise<LoginStatus> {
 }
 
 export async function apiCollectStart(p: SearchParams): Promise<{ ok: boolean; task_id: string; keyword: string; limit: number }> {
-  const body = { keyword: p.keyword, limit: p.limit, sort: p.sort, note_type: p.noteType, interval: p.interval, fast: !!p.fast }
+  const body = {
+    keyword: p.keyword, limit: p.limit, sort: p.sort, note_type: p.noteType,
+    time_range: p.timeRange, scope: p.scope, distance: p.distance,
+    interval: p.interval, fast: !!p.fast,
+  }
   return j(await fetch(`${BASE}/api/collect_start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
