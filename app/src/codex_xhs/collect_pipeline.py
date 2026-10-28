@@ -108,43 +108,47 @@ async def get_feed_detail(note: dict) -> dict:
     """
     d = await _run_browser("note", note.get("feed_id", ""), "NOTE", note.get("xsec_token", ""))
     if d:
-        if d.get("title"):
-            note["title"] = d["title"]
-        if d.get("desc"):
-            note["desc"] = d["desc"]
-        if d.get("type"):
-            # 详情页视频判断更准：二次修正 note_type（搜索卡片 play-icon 可能漏判）
-            note["note_type"] = d["type"]
-        # 无标题笔记兜底：取正文去掉话题标记后的首段前 20 字
-        if not note.get("title") and note.get("desc"):
-            dd = note["desc"].strip().lstrip("#").strip()
-            dd = re.sub(r"\[.*?\]", "", dd).strip()
-            note["title"] = dd[:20]
-        # 互动数据补全（SSR 来源，详情页比搜索卡片更全更准）
-        if d.get("liked_count"):
-            note["liked_count"] = d["liked_count"]
-        if d.get("collected_count"):
-            note["collected_count"] = d["collected_count"]
-        if d.get("comment_count"):
-            note["comment_count"] = d["comment_count"]
-        if d.get("shared_count"):
-            note["shared_count"] = d["shared_count"]
-        # 发布时间：SSR time 为毫秒时间戳 → 秒级；DOM 日期（如 09-22）无年份不做时间戳
-        ms = d.get("publish_time_ms")
-        if ms:
-            try:
-                note["publish_time"] = int(ms) // 1000
-            except (TypeError, ValueError):
-                note["publish_time"] = None
-        # 作者 uid 补全（搜索页 user_id 恒 None → 详情页 SSR 提供）：
-        # 有了 uid，get_user_profile 才能拿到粉丝数（低粉判断的前提）
-        if d.get("user_id"):
-            note["user_id"] = d["user_id"]
-        if d.get("author_nick"):
-            note["nickname"] = d["author_nick"]
-        note["detail_imgs"] = d.get("imgs", [])
+        _merge_detail_core(note, d)
+        _merge_detail_interactions(note, d)
     time.sleep(REQUEST_INTERVAL[0] + random.random() * (REQUEST_INTERVAL[1] - REQUEST_INTERVAL[0]))
     return note
+
+
+def _merge_detail_core(note: dict, d: dict) -> None:
+    """标题/正文/类型 + 无标题兜底 + 作者 uid/昵称 + 详情图片。"""
+    if d.get("title"):
+        note["title"] = d["title"]
+    if d.get("desc"):
+        note["desc"] = d["desc"]
+    if d.get("type"):
+        # 详情页视频判断更准：二次修正 note_type（搜索卡片 play-icon 可能漏判）
+        note["note_type"] = d["type"]
+    # 无标题笔记兜底：取正文去掉话题标记后的首段前 20 字
+    if not note.get("title") and note.get("desc"):
+        dd = note["desc"].strip().lstrip("#").strip()
+        dd = re.sub(r"\[.*?\]", "", dd).strip()
+        note["title"] = dd[:20]
+    # 作者 uid 补全（搜索页 user_id 恒 None → 详情页 SSR 提供）：
+    # 有了 uid，get_user_profile 才能拿到粉丝数（低粉判断的前提）
+    if d.get("user_id"):
+        note["user_id"] = d["user_id"]
+    if d.get("author_nick"):
+        note["nickname"] = d["author_nick"]
+    note["detail_imgs"] = d.get("imgs", [])
+
+
+def _merge_detail_interactions(note: dict, d: dict) -> None:
+    """互动数据补全（SSR 来源，详情页比搜索卡片更全更准）+ 发布时间转换。"""
+    for k in ("liked_count", "collected_count", "comment_count", "shared_count"):
+        if d.get(k):
+            note[k] = d[k]
+    # 发布时间：SSR time 为毫秒时间戳 → 秒级；DOM 日期（如 09-22）无年份不做时间戳
+    ms = d.get("publish_time_ms")
+    if ms:
+        try:
+            note["publish_time"] = int(ms) // 1000
+        except (TypeError, ValueError):
+            note["publish_time"] = None
 
 
 def _parse_fans(text: str) -> int:

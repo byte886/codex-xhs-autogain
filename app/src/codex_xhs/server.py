@@ -150,18 +150,33 @@ def _read_cookie_status(p: Path) -> tuple[bool, str, bool]:
 
     expires=None 是会话级 Cookie（浏览器会话内一直有效，Chrome 导出不携带过期时间）
     → 视为有效；有 expires 且在未来才有效。"""
-    logged_in = False
-    ws = ""
-    exp_ok = True
-    if p.exists():
-        data = json.loads(p.read_text(encoding="utf8"))
-        cookies = data.get("cookies", [])
-        ws = next((c.get("value", "") for c in cookies if c.get("name") == "web_session"), "")
-        now_ts = int(time.time())
-        exps = [c.get("expires") for c in cookies if c.get("name") == "web_session"]
-        exp_ok = (not exps) or any(e is None or (e or 0) >= now_ts for e in exps)
-        logged_in = bool(ws) and exp_ok
-    return logged_in, ws, exp_ok
+    if not p.exists():
+        return False, "", True
+    ws, exp_ok = _parse_web_session(p)
+    return bool(ws) and exp_ok, ws, exp_ok
+
+
+def _parse_web_session(p: Path) -> tuple[str, bool]:
+    """从 cookies.json 提取 web_session 值及其过期有效性。"""
+    data = json.loads(p.read_text(encoding="utf8"))
+    cookies = data.get("cookies", [])
+    return _web_session_value(cookies), _expires_ok(_web_session_expires(cookies))
+
+
+def _web_session_value(cookies: list) -> str:
+    return next((c.get("value", "") for c in cookies if c.get("name") == "web_session"), "")
+
+
+def _web_session_expires(cookies: list) -> list:
+    return [c.get("expires") for c in cookies if c.get("name") == "web_session"]
+
+
+def _expires_ok(exps: list) -> bool:
+    """expires=None 视为会话级 Cookie（一直有效）；有 expires 且在未来才有效。"""
+    if not exps:
+        return True
+    now_ts = int(time.time())
+    return any(e is None or (e or 0) >= now_ts for e in exps)
 
 
 @app.get("/api/login_status")
@@ -324,25 +339,51 @@ async def cdp_setup(req: CdpSetupReq):
     - Chrome 已运行但未开调试 → 返回 need_restart 提示；restart=true 时自动退出并重启。
     """
     from codex_xhs import browser_client
+    port, profile_dir = _persist_and_read_cdp(req, browser_client)
+    already = await _check_cdp_ready(port, profile_dir)
+    if already:
+        return already
+    blocked = await _check_chrome_state(req, browser_client)
+    if blocked:
+        return blocked
+    return await _launch_cdp_chrome(port, profile_dir, browser_client)
+
+
+def _persist_and_read_cdp(req, browser_client):
+    """保存自定义 Chrome/Profile 路径并读取当前调试端口配置。"""
     if req.chrome_path or req.profile_dir:
         browser_client.save_cdp_config(chrome_path=req.chrome_path, profile_dir=req.profile_dir)
-    port, profile_dir = browser_client._profile_settings()
+    return browser_client._profile_settings()
+
+
+async def _check_cdp_ready(port: int, profile_dir: str):
+    """探测已就绪的调试端口（配置端口 或 chrome://inspect 的 DevTools 端口）。"""
     if await _probe_cdp(port):
         return {"ok": True, "status": "ready", "note": f"CDP 已就绪（端口 {port}）"}
     dev_port = _read_devtools_active_port(profile_dir)
     if dev_port and await _probe_cdp(dev_port):
         return {"ok": True, "status": "ready", "note": f"CDP 已就绪（chrome://inspect 远程调试，端口 {dev_port}）"}
+    return None
+
+
+async def _check_chrome_state(req, browser_client):
+    """Chrome 缺失/未开调试时的阻断分支：返回 need_restart 或重启 Chrome。"""
     if browser_client.chrome_executable() is None:
         return {"ok": False, "note": "未找到 Chrome，请填写 Chrome 路径或先安装 Google Chrome"}
-    if browser_client.chrome_running():
-        if not req.restart:
-            return {
-                "ok": False, "need_restart": True,
-                "note": "Chrome 已在运行但未开启远程调试，请退出 Chrome 后再次点击「一键配置」，或先点「打开远程调试设置」开启开关",
-            }
-        browser_client.quit_chrome()
-        await asyncio.sleep(2)
-    # 生产环境：调平台脚本带参数启动 Chrome 并打开配置页（用户只需在弹窗点「允许」）
+    if not browser_client.chrome_running():
+        return None
+    if not req.restart:
+        return {
+            "ok": False, "need_restart": True,
+            "note": "Chrome 已在运行但未开启远程调试，请退出 Chrome 后再次点击「一键配置」，或先点「打开远程调试设置」开启开关",
+        }
+    browser_client.quit_chrome()
+    await asyncio.sleep(2)  # 等 Chrome 完全退出再重新拉起
+    return None
+
+
+async def _launch_cdp_chrome(port: int, profile_dir: str, browser_client):
+    """带调试参数启动 Chrome（平台脚本或直启）并轮询等待调试端口就绪。"""
     script = _platform_setup_script()
     if script is not None:
         r = subprocess.run([sys.executable, str(script), str(port), profile_dir],
@@ -505,23 +546,12 @@ def _cleanup_orphan_images() -> int:
 
     背景：封面图下载链路已废弃（前端封面走 cover_url 网络直连，local_cover 从未写入），
     采集/克隆的旧图会无限堆积——启动时（后端 startup + 前端启动请求）双保险清理。"""
-    try:
-        con = _db()
-        ids = {r[0].replace("#", "_") for r in con.execute("SELECT feed_id FROM notes").fetchall()}
-        con.close()
-    except Exception:  # noqa: BLE001
-        ids = set()
+    ids = _referenced_feed_ids()
     if not IMAGES_DIR.exists():
         return 0
     removed = 0
     for f in IMAGES_DIR.iterdir():
-        if not f.is_file():
-            continue
-        # 用户发布页「追加图片」上传的资产（user_ 前缀）属于用户主动操作产物，永不自动清理
-        if f.name.startswith("user_"):
-            continue
-        feed_id = f.name.split("_", 1)[0] if "_" in f.name else f.stem
-        if feed_id in ids:
+        if _keep_image(f, ids):
             continue
         try:
             f.unlink()
@@ -529,6 +559,28 @@ def _cleanup_orphan_images() -> int:
         except OSError:  # noqa: BLE001
             pass
     return removed
+
+
+def _referenced_feed_ids() -> set:
+    """当前 notes 批次引用的 feed_id 集合（DB 读取失败兜底空集=全清理）。"""
+    try:
+        con = _db()
+        ids = {r[0].replace("#", "_") for r in con.execute("SELECT feed_id FROM notes").fetchall()}
+        con.close()
+        return ids
+    except Exception:  # noqa: BLE001
+        return set()
+
+
+def _keep_image(f, ids: set) -> bool:
+    """是否保留该图片文件：非文件 / 用户上传资产（user_ 前缀）/ 当前批次引用。"""
+    if not f.is_file():
+        return True
+    # 用户发布页「追加图片」上传的资产（user_ 前缀）属于用户主动操作产物，永不自动清理
+    if f.name.startswith("user_"):
+        return True
+    feed_id = f.name.split("_", 1)[0] if "_" in f.name else f.stem
+    return feed_id in ids
 
 
 def _persist_notes(keyword: str, notes: list) -> tuple:
@@ -565,27 +617,37 @@ async def _enrich_notes(notes: list, fast: bool = False) -> list:
     for n in notes:
         try:
             if fast:
-                d = await browser_client.note(n.get("feed_id", ""), n.get("xsec_token", ""), wait_ms=2500)
-                for k in ("liked_count", "collected_count", "comment_count", "shared_count", "user_id", "author_nick"):
-                    if d.get(k):
-                        n[k] = d[k]
-                if d.get("publish_time_ms"):
-                    n["publish_time"] = int(d["publish_time_ms"]) // 1000
-                uid = n.get("user_id")
-                if uid:
-                    if uid not in cache:
-                        try:
-                            u = await browser_client.user(uid, wait_ms=3500)
-                            cache[uid] = u.get("fans", "") or "0"
-                        except Exception:  # noqa: BLE001
-                            cache[uid] = "0"
-                    n["fans_count"] = cache[uid]
+                await _enrich_fast(n, cache)
             else:
                 n = await get_feed_detail(n)
                 n = await get_user_profile(n, cache)
         except Exception:  # noqa: BLE001 单条失败不影响整体
             continue
     return notes
+
+
+async def _enrich_fast(n: dict, cache: dict) -> None:
+    """快速档：直连详情页补互动 + 作者主页补粉丝（无拟人等待）。"""
+    d = await browser_client.note(n.get("feed_id", ""), n.get("xsec_token", ""), wait_ms=2500)
+    for k in ("liked_count", "collected_count", "comment_count", "shared_count", "user_id", "author_nick"):
+        if d.get(k):
+            n[k] = d[k]
+    if d.get("publish_time_ms"):
+        n["publish_time"] = int(d["publish_time_ms"]) // 1000
+    uid = n.get("user_id")
+    if uid:
+        await _fill_fans(n, uid, cache)
+
+
+async def _fill_fans(n: dict, uid: str, cache: dict) -> None:
+    """作者粉丝数（按 uid 缓存；作者主页失败兜底 0）。"""
+    if uid not in cache:
+        try:
+            u = await browser_client.user(uid, wait_ms=3500)
+            cache[uid] = u.get("fans", "") or "0"
+        except Exception:  # noqa: BLE001
+            cache[uid] = "0"
+    n["fans_count"] = cache[uid]
 
 
 @app.post("/api/collect_start")
@@ -662,7 +724,14 @@ async def collect_stop(req: CollectStopReq):
 # ================= 笔记列表 =================
 @app.get("/api/notes")
 def notes(keyword: str = "", order: str = "score", tag: str = ""):
-    con = _db()
+    sql, params = _notes_query(keyword, tag, order)
+    rows = _db().execute(sql, params).fetchall()
+    out = [_decorate_note(dict(r)) for r in rows]
+    return {"total": len(out), "notes": out}
+
+
+def _notes_query(keyword: str, tag: str, order: str) -> tuple:
+    """按关键词/标签/排序构造查询（关键词命中标题/作者/采集词）。"""
     sql = "SELECT * FROM notes WHERE 1=1"
     params = []
     if keyword:
@@ -676,32 +745,35 @@ def notes(keyword: str = "", order: str = "score", tag: str = ""):
     else:
         sql += " ORDER BY fetched_at DESC"
     sql += " LIMIT 200"
-    rows = con.execute(sql, params).fetchall()
-    out = []
-    for r in rows:
-        d = dict(r)
-        # 评分明细：优先读库（新采集含 score_info JSON）；老数据无列值则用现有字段重算兜底
-        si = None
-        raw = d.get("score_info")
-        if raw:
-            try:
-                si = json.loads(raw)
-            except Exception:  # noqa: BLE001
-                si = None
-        if not si:
-            try:
-                si = rank_notes([d])[0]["score_info"]
-            except Exception:  # noqa: BLE001
-                si = None
-        if si:
-            d["score_info"] = si
-        else:
-            d.pop("score_info", None)
-        # 本地封面存在则替换为本地代理路径（xhscdn 防盗链，直连会 403）
-        cf = IMAGES_DIR / _img_name(d["feed_id"])
-        d["local_cover"] = f"/app/images/{_img_name(d['feed_id'])}" if cf.exists() else ""
-        out.append(d)
-    return {"total": len(out), "notes": out}
+    return sql, params
+
+
+def _decorate_note(d: dict) -> dict:
+    """补评分明细（库值优先、老数据重算兜底）与本地封面路径。"""
+    _attach_score_info(d)
+    cf = IMAGES_DIR / _img_name(d["feed_id"])
+    d["local_cover"] = f"/app/images/{_img_name(d['feed_id'])}" if cf.exists() else ""
+    return d
+
+
+def _attach_score_info(d: dict) -> None:
+    """评分明细：优先读库 score_info JSON；无列值则用现有字段重算兜底。"""
+    si = None
+    raw = d.get("score_info")
+    if raw:
+        try:
+            si = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            si = None
+    if not si:
+        try:
+            si = rank_notes([d])[0]["score_info"]
+        except Exception:  # noqa: BLE001
+            si = None
+    if si:
+        d["score_info"] = si
+    else:
+        d.pop("score_info", None)
 
 
 # ================= 作者价值聚合（P2：帮用户识别值得模仿的博主） =================
