@@ -1550,6 +1550,55 @@ async def test_llm(req: LLMConfigReq):
     return await llm_service.test_with_saved(req.api_key, req.openai_base_url, req.default_model)
 
 
+class AIGenReq(BaseModel):
+    action: str = ""          # title_summarize / title_rewrite / body_create / body_rewrite / tags
+    note: dict = {}           # {title, desc, keyword} 原笔记信息
+
+
+_AI_PROMPTS = {
+    "title_summarize": (
+        "你是小红书爆文标题优化师。请把下面的笔记标题提炼成 1 个更吸引人的标题（不超过20字，"
+        "不含标点符号和表情，保留原笔记的核心卖点方向），只输出标题本身，不要任何解释：\n标题：{title}"
+    ),
+    "title_rewrite": (
+        "你是小红书爆文标题优化师。保留原笔记的爆款方向，重写 1 个全新的标题（不超过20字，"
+        "不含标点符号和表情，标题要有钩子、引发好奇或共鸣），只输出标题本身，不要任何解释：\n标题：{title}"
+    ),
+    "body_create": (
+        "你是小红书爆文作者。参考原笔记的主题方向，创作一篇全新的小红书正文（800-1200字，"
+        "口语化、分段清晰、适当使用emoji、结尾带 3-5 个相关话题标签），只输出正文，不要任何解释：\n"
+        "原标题：{title}\n原正文：{desc}"
+    ),
+    "body_rewrite": (
+        "你是小红书爆文作者。把下面的正文语义重写一遍（换一种表达方式，保留核心信息与观点，"
+        "口语化、分段清晰、适当使用emoji），只输出重写后的正文，不要任何解释：\n原正文：{desc}"
+    ),
+    "tags": (
+        "你是小红书话题标签专家。为下面的笔记提取 5 个精准的话题标签（#开头，中文为主，"
+        "覆盖品类/场景/人群/痛点），只输出标签列表（用空格分隔），不要任何解释：\n"
+        "标题：{title}\n正文：{desc}"
+    ),
+}
+
+
+@app.post("/api/ai_generate")
+async def ai_generate(req: AIGenReq):
+    """AI 文稿生成（Key 门控，O1-2）：未配置 LLM 时 400 拒绝（前端按钮灰态+提示）。"""
+    if req.action not in _AI_PROMPTS:
+        raise HTTPException(400, f"未知 AI 动作：{req.action}")
+    title = (req.note.get("title") or "")[:500]
+    desc = (req.note.get("desc") or "")[:2000]
+    keyword = (req.note.get("keyword") or "")[:200]
+    try:
+        prompt = _AI_PROMPTS[req.action].format(title=title, desc=desc, keyword=keyword)
+        result = await llm_service.chat(
+            "你是一个专业的小红书内容创作助手，输出精炼、可直接使用，不要客套。", prompt
+        )
+        return {"ok": True, "action": req.action, "result": result}
+    except ValueError as e:  # 未配置 Key / 请求失败 → 400
+        raise HTTPException(400, str(e)) from e
+
+
 # ================= 静态前端 =================
 app.mount("/assets", StaticFiles(directory=str(WEB_DIR / "assets")), name="assets")
 # 本地封面图静态服务（xhscdn 图床按 Referer 防盗链，本地代理同源访问无 403）

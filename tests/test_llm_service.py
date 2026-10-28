@@ -96,6 +96,38 @@ def test_routes_llm_test_unconfigured(llm_cfg, monkeypatch):
     assert r.json()["ok"] is False
 
 
+# ---- O1-2 AI 文稿生成路由 ----
+def test_ai_generate_unknown_action(llm_cfg, monkeypatch):
+    monkeypatch.setattr(server, "llm_service", llm_service)
+    c = TestClient(server.app)
+    r = c.post("/api/ai_generate", json={"action": "nope", "note": {}})
+    assert r.status_code == 400 and "未知 AI 动作" in r.json()["detail"]
+
+
+def test_ai_generate_gate_when_unconfigured(llm_cfg, monkeypatch):
+    """未配置 LLM → 400（Key 门控）。"""
+    monkeypatch.setattr(server, "llm_service", llm_service)
+    c = TestClient(server.app)
+    r = c.post("/api/ai_generate", json={"action": "title_rewrite", "note": {"title": "翡翠怎么挑"}})
+    assert r.status_code == 400 and "未配置 AI 模型" in r.json()["detail"]
+
+
+def test_ai_generate_success(llm_cfg, monkeypatch):
+    """已配置 → mock chat 返回结果。"""
+    llm_service.save_config("sk-k", "https://api.openai.com/v1", "gpt-4o-mini")
+    monkeypatch.setattr(server, "llm_service", llm_service)
+
+    async def fake_chat(system, user, **kw):
+        assert "标题" in user
+        return "翡翠小白避坑指南"
+
+    monkeypatch.setattr(llm_service, "chat", fake_chat)
+    c = TestClient(server.app)
+    r = c.post("/api/ai_generate", json={"action": "title_rewrite", "note": {"title": "翡翠怎么挑"}})
+    assert r.status_code == 200
+    assert r.json()["ok"] is True and r.json()["result"] == "翡翠小白避坑指南"
+
+
 class _FakeResp:
     def __init__(self, status_code, json_data):
         self.status_code = status_code
