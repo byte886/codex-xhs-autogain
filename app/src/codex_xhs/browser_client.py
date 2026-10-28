@@ -738,29 +738,27 @@ async def _prepare_search_page(keyword: str, filters: dict | None = None):
 
     检测登录墙/风控验证：Cookie 在但页面要求登录或验证时，立即抛
     BrowserLoginRequiredError（不空等、不空跑），由采集链路中止任务并提示人工处理。
+    **登录墙页面保留不关闭**：用户需要在这个页面上扫码/验证恢复，关闭会断送扫码入口。
     """
     url = _XHS + "/search_result?keyword=" + _urlencode(keyword) + "&source=web_search_result_notes"
     page = await _load(url, 2500)
     appeared, wall = await _wait_note_cards(page, timeout_s=45)
     if wall:
-        await _close_page_safe(page)
-        raise BrowserLoginRequiredError(wall)
+        raise BrowserLoginRequiredError(wall)  # 保留页面供扫码，不关闭
     if not appeared:
         # AI 搜索页（无 section.note-item）→ 回退无 source 的旧版搜索
         await _close_page_safe(page)
         page = await _load(_XHS + "/search_result?keyword=" + _urlencode(keyword), 2500)
         appeared, wall = await _wait_note_cards(page, timeout_s=45)
         if wall:
-            await _close_page_safe(page)
-            raise BrowserLoginRequiredError(wall)
+            raise BrowserLoginRequiredError(wall)  # 保留页面供扫码，不关闭
     if appeared:
         # 应用筛选条件后再采集（页面可能刷新，需再次等待卡片）
         await _apply_filters(page, filters or {})
         if filters:
             _, wall = await _wait_note_cards(page, timeout_s=30)
             if wall:
-                await _close_page_safe(page)
-                raise BrowserLoginRequiredError(wall)
+                raise BrowserLoginRequiredError(wall)  # 保留页面供扫码，不关闭
     return page
 
 
