@@ -352,12 +352,32 @@ async def _page():
     return await ctx.new_page()
 
 
+async def _close_page_safe(page):
+    """关闭页面但保证浏览器至少留一个空白页。
+
+    关键（风控/反复开关根因）：Chrome 关闭最后一个页面时整个浏览器会退出，
+    下次任务检测不到 9223 又自动拉起 → 反复开关 Chrome/Tab，观感极不拟人。
+    因此在关闭前若只剩本页，先补开一个 about:blank 保底，浏览器保持常驻。
+    """
+    try:
+        ctx = page.context
+        if len(ctx.pages) <= 1:
+            await ctx.new_page()  # about:blank 保底
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        await page.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def cleanup_tabs():
     """清理 9223 生产 Chrome 中与任务无关的标签页：APP 前端页(127.0.0.1:8791)与
     about:blank 保留原样，其余全部关闭。避免误关用户正在使用的 APP 窗口。
 
     使用场景：测试/演示前后、以及长时间运行后定期执行，避免反复 _page() 建后台页造成 tab 堆积。
     对生产会话安全：只关多余页面、不动浏览器本身；连接复用 get_browser() 现有连接。
+    清理后若页面清空，补开一个 about:blank 保底（避免 Chrome 因无页面退出）。
     """
     try:
         browser = await get_browser()
@@ -373,6 +393,11 @@ async def cleanup_tabs():
                 closed += 1
             except Exception:  # noqa: BLE001
                 continue
+        if not ctx.pages:  # 全部清空 → 补空白页保底，浏览器不退出
+            try:
+                await ctx.new_page()
+            except Exception:  # noqa: BLE001
+                pass
         return closed
     except Exception as exc:  # noqa: BLE001
         print(f"[cleanup_tabs] 清理失败（非阻断）: {exc}")
@@ -394,7 +419,7 @@ async def _load(url: str, wait_ms: int = 5000):
         return page
     except Exception:
         try:
-            await page.close()
+            await _close_page_safe(page)
         except Exception:  # noqa: BLE001
             pass
         raise
@@ -417,7 +442,7 @@ async def login_check() -> dict:
                 "})"
             )
         finally:
-            await page.close()
+            await _close_page_safe(page)
 
 
 _h_pw = None
@@ -464,7 +489,7 @@ async def _headless_explore(cookies: list[dict]) -> dict:
                 "})"
             )
         finally:
-            await page.close()
+            await _close_page_safe(page)
     finally:
         # 判定完成后移除注入脚本，避免污染后续 context 复用
         try:
@@ -503,7 +528,7 @@ async def cookies() -> dict:
             ],
         }
     finally:
-        await page.close()
+        await _close_page_safe(page)
 
 
 async def verify_cookies(cookies: list[dict]) -> dict:
@@ -557,7 +582,7 @@ async def _verify_profile(cookies: list[dict]) -> dict:
                 "})"
             )
         finally:
-            await page.close()
+            await _close_page_safe(page)
         return result
     finally:
         # ④ 恢复生产登录态：清空 → 重新注入本地已保存的 cookies.json（若存在）
@@ -665,7 +690,7 @@ async def _prepare_search_page(keyword: str, filters: dict | None = None):
     appeared = await _wait_note_cards(page, timeout_s=45)
     if not appeared:
         # AI 搜索页（无 section.note-item）→ 回退无 source 的旧版搜索
-        await page.close()
+        await _close_page_safe(page)
         page = await _load(_XHS + "/search_result?keyword=" + _urlencode(keyword), 2500)
         appeared = await _wait_note_cards(page, timeout_s=45)
     if appeared:
@@ -738,7 +763,7 @@ async def search(keyword: str, limit: int = 30, on_progress=None, should_stop=No
         stopped = bool(should_stop and should_stop())
         return {"keyword": keyword, "count": len(items), "items": items, "stopped": stopped}
     finally:
-        await page.close()
+        await _close_page_safe(page)
 
 
 async def note(note_id: str, xsec_token: str = "", wait_ms: int = 5000) -> dict:
@@ -750,7 +775,7 @@ async def note(note_id: str, xsec_token: str = "", wait_ms: int = 5000) -> dict:
     try:
         return await page.evaluate("() => xhsExtractNoteDetail()")
     finally:
-        await page.close()
+        await _close_page_safe(page)
 
 
 async def user(uid: str, wait_ms: int = 5000) -> dict:
@@ -758,7 +783,7 @@ async def user(uid: str, wait_ms: int = 5000) -> dict:
     try:
         return await page.evaluate("() => xhsExtractUser()")
     finally:
-        await page.close()
+        await _close_page_safe(page)
 
 
 async def clients(note_id: str, xsec_token: str = "") -> dict:
@@ -802,7 +827,7 @@ async def clients(note_id: str, xsec_token: str = "") -> dict:
                 await asyncio.sleep(2)
         return await page.evaluate("() => xhsExtractComments()")
     finally:
-        await page.close()
+        await _close_page_safe(page)
 
 
 async def open_front() -> dict:

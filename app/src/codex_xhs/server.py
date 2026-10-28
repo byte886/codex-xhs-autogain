@@ -50,6 +50,23 @@ from codex_xhs import browser_client  # noqa: E402（快速档 _enrich_notes 直
 
 app = FastAPI(title="Codex 自动获客 · 本地工具")
 
+# ---- 拟人频率保护（平台风控：操作过频触发临时行为控制，需限流）----
+_COLLECT_MIN_INTERVAL = 90.0        # 两次平台采集/搜索任务的最小间隔（秒）
+_last_collect_end_at = [0.0]        # 最近一次平台任务结束时间（含停止/失败），列表引用以在闭包中改写
+
+
+def _check_collect_throttle() -> None:
+    """采集/搜索前的频率闸：距上次平台任务结束不足阈值时拒绝，避免被风控标记异常行为。"""
+    elapsed = time.time() - _last_collect_end_at[0]
+    if elapsed < _COLLECT_MIN_INTERVAL:
+        wait = int(_COLLECT_MIN_INTERVAL - elapsed) + 1
+        raise HTTPException(400, f"操作过于频繁，请 {wait} 秒后再试（拟人频率保护）")
+
+
+def _mark_collect_done() -> None:
+    """平台任务结束（成功/停止/失败）统一记录结束时间，供节流闸使用。"""
+    _last_collect_end_at[0] = time.time()
+
 
 @app.on_event("startup")
 async def _startup_cleanup():
@@ -486,6 +503,7 @@ async def _require_login():
 async def search(req: SearchReq):
     """搜索（同步版，兼容旧前端）：采集 → 评分 → 落库。返回新增条数与最新 TOP 评分。"""
     await _require_login()
+    _check_collect_throttle()  # 拟人频率保护
     before = _db().execute("SELECT COUNT(*) FROM notes").fetchone()[0]
     try:
         res = await search_via_browser(
@@ -497,11 +515,14 @@ async def search(req: SearchReq):
         )
         notes = res.get("items", [])
     except Exception as e:
+        _mark_collect_done()
         return {"added": 0, "total": before, "top": [], "note": f"搜索未返回结果（{str(e)[:80]}），请确认 Chrome 已打开并登录小红书后重试"}
     if not notes:
+        _mark_collect_done()
         return {"added": 0, "total": before, "top": [], "note": "搜索未返回结果，请确认 Chrome 已打开并登录小红书后重试"}
     notes = await _enrich_notes(notes, fast=req.fast)
     saved, total, top = _persist_notes(req.keyword, notes)
+    _mark_collect_done()
     return {"added": saved, "total": total, "top": top, "source": "关键词搜索（本地 Chrome）"}
 
 
@@ -658,6 +679,7 @@ async def _fill_fans(n: dict, uid: str, cache: dict) -> None:
 async def collect_start(req: SearchReq):
     """启动采集任务：后台滚动平台搜索页逐批提取，直到满额/平台不增长/用户停止。"""
     await _require_login()
+    _check_collect_throttle()  # 拟人频率保护：距上次平台任务过近则拒绝
     for tid, st in list(_COLLECT_TASKS.items()):
         if st.get("status") == "running":
             st["stop_event"] = True
@@ -695,6 +717,8 @@ async def collect_start(req: SearchReq):
         except Exception as e:
             state["status"] = "error"
             state["note"] = f"采集失败：{str(e)[:100]}"
+        finally:
+            _mark_collect_done()  # 结束即记录，供节流闸使用
 
     state["task"] = asyncio.create_task(worker())
     return {"ok": True, "task_id": tid, "keyword": req.keyword, "limit": req.limit}

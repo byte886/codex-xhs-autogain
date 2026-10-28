@@ -25,6 +25,14 @@ def _no_real_browser(monkeypatch):
     monkeypatch.setattr(browser_client, "cleanup_tabs", _noop_cleanup_tabs)
 
 
+@pytest.fixture(autouse=True)
+def _reset_collect_throttle():
+    """重置拟人频率保护状态：测试间连续调用 /api/search|collect_start 不应互相节流。"""
+    from codex_xhs import server
+
+    server._last_collect_end_at[0] = 0.0
+
+
 @pytest.fixture()
 def now_utc():
     return datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
