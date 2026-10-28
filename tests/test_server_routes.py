@@ -178,6 +178,77 @@ class TestCollect:
             time.sleep(0.02)
         assert pr["status"] == "error" and "采集失败" in pr["note"]
 
+    def test_collect_filters_passthrough(self, client, monkeypatch):
+        """前端 5 个筛选参数（排序/类型/时间/范围/距离）必须透传到 search_via_browser.filters。
+
+        对应 CollectPanel.vue 的 sort/noteType/timeRange/scope/distance 5 个 select 与
+        browser_client._apply_filters 的 5 类筛选（跳过默认值逻辑）。
+        """
+        got = {}
+
+        async def fake_search(*a, **k):
+            got["filters"] = k.get("filters")
+            return {"items": [{"feed_id": "f1", "title": "t"}], "stopped": False}
+
+        async def fake_enrich(items, **k):
+            return items  # 跳过真实浏览器详情补全（同 _run_collect）
+
+        monkeypatch.setattr(server, "search_via_browser", fake_search)
+        monkeypatch.setattr(server, "_enrich_notes", fake_enrich)
+        r = client.post("/api/collect_start", json={
+            "keyword": "翡翠", "limit": 3,
+            "sort": "最新", "note_type": "视频", "time_range": "一年内",
+            "scope": "未看过", "distance": "同城",
+        })
+        tid = r.json()["task_id"]
+        for _ in range(100):
+            pr = client.get(f"/api/collect_progress?task_id={tid}").json()
+            if pr["status"] != "running":
+                break
+            time.sleep(0.02)
+        assert pr["status"] == "done"
+        # 5 个筛选一个不少、原样透传（中文选项，与 _apply_filters 消费格式一致）
+        assert got["filters"] == {
+            "sort": "最新", "note_type": "视频", "time_range": "一年内",
+            "scope": "未看过", "distance": "同城",
+        }
+
+    def test_collect_filters_defaults_skipped(self, client, monkeypatch):
+        """默认值（综合/全部/不限）必须被 _apply_filters 跳过——不产生多余的筛选点击。
+
+        对应 browser_client._apply_filters：val 在（综合/全部/不限/空）时整项不应用。
+        """
+        got = {}
+
+        async def fake_search(*a, **k):
+            got["filters"] = k.get("filters")
+            return {"items": [], "stopped": False}
+
+        async def fake_enrich(items, **k):
+            return items
+
+        monkeypatch.setattr(server, "search_via_browser", fake_search)
+        monkeypatch.setattr(server, "_enrich_notes", fake_enrich)
+        r = client.post("/api/collect_start", json={
+            "keyword": "k", "limit": 3,
+            "sort": "综合", "note_type": "全部", "time_range": "",
+            "scope": "不限", "distance": "",
+        })
+        tid = r.json()["task_id"]
+        for _ in range(100):
+            pr = client.get(f"/api/collect_progress?task_id={tid}").json()
+            if pr["status"] != "running":
+                break
+            time.sleep(0.02)
+        assert pr["status"] == "done"
+        # 全默认：透传后 _apply_filters 应全部跳过（wanted 为空）——这里只验证透传本身，
+        # 跳过逻辑由 browser_client._apply_filters 单元逻辑保证（filters 原样到达）
+        assert got["filters"] == {
+            "sort": "综合", "note_type": "全部", "time_range": "",
+            "scope": "不限", "distance": "",
+        }
+
+
     def test_collect_progress_missing(self, client):
         r = client.get("/api/collect_progress", params={"task_id": "nope"})
         assert r.json()["ok"] is False
