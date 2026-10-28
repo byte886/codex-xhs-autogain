@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // ClientsPanel v1.5：客户 Tab（O1-3 评论区线索 + O1-4 聚合 + O1-5 获客指引）
 // 采集完成/新增线索后由 App.vue 调 refresh() 重新拉取
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import type { ClientUser, ClientsAgg } from '../types'
 import { apiClientsList, apiClientsAgg } from '../api'
 
@@ -53,6 +53,9 @@ async function loadAgg() {
 async function refresh() {
   await Promise.all([loadClients(), loadAgg()])
 }
+
+/** 挂载即加载：刷新/重进页面后客户库反映 DB 真实状态（否则显示"暂无客户"造成数据丢失假象） */
+onMounted(() => { refresh() })
 
 async function setClTab(tab: 'all' | 'high' | '7d') {
   clTab.value = tab
