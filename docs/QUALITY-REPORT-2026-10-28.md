@@ -9,10 +9,10 @@
 |---|---|---|---|
 | 测试（全量） | pytest | ✅ 9 文件全绿 EXIT=0 | score 38 / cookie_reader 15+23 / browser_client 7 / collect_pipeline 6 / server / server_routes 60 / server_api 10 / **server_cdp 29（新增）**，共 173 |
 | 架构约束 | import-linter | ✅ 2/2 contracts kept, 0 broken | leaf 纯净（score/cookie_reader）；server 顶层（无环） |
-| 圈复杂度 | radon | ✅ 已清零（阈值 ≤8） | 见下方清单；无任何 >8 函数 |
+| 圈复杂度 | radon / crapper | ✅ 已清零（阈值 ≤8） | server 5 处（b818b64）+ **browser_client.chrome_executable CC10→5（本轮）**；当前全项目无 >8 函数 |
 | 覆盖率 | pytest --cov | ✅ 85%（≥80 门达标） | cookie_reader 93% / score 95% / server 72%→**83%**（新增 CDP 配置层测试）；browser_client / collect_pipeline 按 `.coveragerc` 设计豁免（人工冒烟口径） |
-| CRAP / 变异 | crapper / mutator | ⚠️ 部分可用 | crapper 已可产出 `.metrics/crap.edn`（coverage 挂载待修：lcov 读入后 Cov=0，CRAP 数值暂不可信）；mutator / dryer 状态待复核 |
-| DRY | dryer | ⚠️ 待复核 | `.metrics/dry.edn` 仅 17B（疑空结果） |
+| CRAP / 变异 | crapper / mutator | ✅ 已落地 | CRAP 数值真实（lcov 挂载修复：必须放 `target/coverage/python/lcov.info`）；变异重跑（13:25）：server 171 killed / score 51 / cookie_reader 35 killed，**存活 0**；browser_client / collect_pipeline 按豁免未执行变异（无覆盖=未运行，与 .coveragerc 口径一致） |
+| DRY | dryer | ✅ 0 候选 | 修复 1 处完全重复（`_platform_setup_script`/`_pick_chrome_script` → 合并 `_script_path`）后 `No duplicate candidates found` |
 | 前端构建 | npm run build | ✅ 通过 | 产出 ../web/assets/index-CnNw2ilS.js / CRKb7nSt.css |
 | 脚本语法 | node --check | ✅ extract.js 通过 | 生产链路注入源 |
 
@@ -42,5 +42,8 @@
 
 1. ~~全量 pytest 收尾挂起~~ **✅ 已根治**（见上节，conftest 全局 autouse patch + pytest-timeout 双保险）。
 2. ~~覆盖率挂起/未达标~~ **✅ 已达标**：真实口径 85% ≥ 80% 门（server 83%）；browser_client / collect_pipeline 按 `.coveragerc` 设计豁免（集成层人工冒烟口径）。
-3. **gauntlet CRAP 数值落地**：crapper 已修通并产出 `.metrics/crap.edn`（最差 `chrome_executable` CRAP 110），但 lcov 读入后各函数 Cov=0（疑似 crapper 的 lcov 路径匹配或 omit 影响）——CRAP 数值暂不可信，可选项：修 crapper lcov 挂载，或以"radon CC≤8 + 真实覆盖率 85% + 人工评审"替代口径收尾；mutator / dryer 状态待复核（`.metrics/mutate/` 有 22 项产物，10-27 生成）。
+3. ~~gauntlet CRAP / 变异 / DRY~~ **✅ 已全部落地**：
+   - CRAP：lcov 挂载修复（crapper 只认 `target/coverage/python/lcov.info` 等约定路径，此前 `coverage.lcov` 放项目根读不到）→ 数值真实；全项目唯一 CC 超标点 `chrome_executable`（CC10）已重构拆分为 5。
+   - 变异：mutator 对当前代码重跑（13:25）——server 171 / score 51 / cookie_reader 35 变异体**全部被杀，存活 0**；browser_client / collect_pipeline 因无覆盖率豁免未执行变异（与 .coveragerc 豁免口径一致）。
+   - DRY：dryer 发现 server.py 2 处完全重复（`_platform_setup_script`/`_pick_chrome_script`）→ 合并为 `_script_path` 公共函数 → `No duplicate candidates found`。
 4. **平台限流**：10-28 清晨两次低频探测（05:13 / 上午）均 180s 超时且 Chrome 出现 `website-login/captcha` tab（"请求太频繁"），已按原则清理残留 tab、未连环重试——**仍限流中**；待恢复后跑真实链路（采集→评分→作者榜→克隆验证提取增强→客户库→草稿），发布永远手动。

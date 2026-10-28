@@ -228,16 +228,20 @@ class CdpSetupReq(BaseModel):
     profile_dir: str = ""  # 用户自定义 Profile 路径（持久化）
 
 
+def _script_path(name: str) -> Path | None:
+    """定位 app/scripts 下的生产辅助脚本，脚本不存在时返回 None。"""
+    p = Path(__file__).resolve().parents[3] / "app" / "scripts" / name
+    return p if p.exists() else None
+
+
 def _platform_setup_script() -> Path | None:
     """生产环境脚本：单脚本跨平台（内部按系统分流），带参数启动 Chrome 并打开配置页。"""
-    p = Path(__file__).resolve().parents[3] / "app" / "scripts" / "setup_chrome.py"
-    return p if p.exists() else None
+    return _script_path("setup_chrome.py")
 
 
 def _pick_chrome_script() -> Path | None:
     """生产环境脚本：系统文件对话框选择 Chrome（未找到可用 Chrome 时使用）。"""
-    p = Path(__file__).resolve().parents[3] / "app" / "scripts" / "pick_chrome.py"
-    return p if p.exists() else None
+    return _script_path("pick_chrome.py")
 
 
 def _pick_chrome_file() -> str | None:

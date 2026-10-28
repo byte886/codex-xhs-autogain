@@ -46,3 +46,5 @@ target/
 # --- 质检工具产物（不入库） ---
 .metrics/
 coverage.lcov
+target/
+coverage/

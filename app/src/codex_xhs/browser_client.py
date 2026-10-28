@@ -161,18 +161,26 @@ def chrome_executable() -> str | None:
     if user_path and os.path.exists(user_path):
         return user_path
     if sys.platform == "darwin":
-        candidates = [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            str(pathlib.Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-        ]
-        for p in candidates:
-            if os.path.exists(p):
-                return p
-        return None
+        return _mac_chrome_candidates()
     if os.name == "nt":
-        for p in _win_chrome_candidates():
-            if p and os.path.exists(p):
-                return p
+        return _first_existing(_win_chrome_candidates())
+    return None
+
+
+def _mac_chrome_candidates() -> str | None:
+    """macOS Chrome 定位候选：/Applications 默认安装 + ~/Applications 用户级安装。"""
+    candidates = (
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        str(pathlib.Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+    )
+    return _first_existing(list(candidates))
+
+
+def _first_existing(paths: list[str]) -> str | None:
+    """返回候选路径列表中第一个真实存在的路径，均不存在时返回 None。"""
+    for p in paths:
+        if p and os.path.exists(p):
+            return p
     return None
 
 
