@@ -495,15 +495,158 @@ class SearchReq(BaseModel):
     fast: bool = False
 
 
+def _target_chrome_cookie_db(profile_dir: str) -> str | None:
+    """目标调试 Chrome（独立 Profile）的 Cookie 库路径。
+
+    Chrome 156+ 在 Default/Network/Cookies；旧版本在 Default/Cookies。
+    返回 None 表示独立 Profile 尚未创建 / 未初始化（CDP 未配置或从未登录）。
+    """
+    for cand in (
+        os.path.join(profile_dir, "Default", "Network", "Cookies"),
+        os.path.join(profile_dir, "Default", "Cookies"),
+    ):
+        if os.path.exists(cand):
+            return cand
+    return None
+
+
+def _chrome_cookies_to_saved(cookies: list) -> list:
+    """cookie_reader 读取结果（{name,value,domain,path,expires}）→ cookies.json 落盘格式。
+
+    cookies.json 供 Playwright add_cookies 注入，需 secure/httpOnly/sameSite：
+    按域名推断 secure（点前缀 https-only 域名），httpOnly/sameSite 取常见安全默认。
+    """
+    out = []
+    for c in cookies:
+        if not c.get("name") or not c.get("value"):
+            continue
+        domain = c.get("domain", "")
+        out.append({
+            "name": c["name"],
+            "value": c["value"],
+            "domain": domain,
+            "path": c.get("path") or "/",
+            "secure": domain.startswith("."),
+            "httpOnly": c.get("name") in ("web_session", "a1", "xsecappid", "gid"),
+            "sameSite": "Lax",
+        })
+    return out
+
+
+def _persist_restored_cookies(cookies: list) -> int:
+    """把恢复的 Cookie 落盘 cookies.json（方案 A 格式），返回条数。"""
+    import datetime as _dt
+    p = BASE / "data" / "cookies.json"
+    payload = {
+        "cookies": _chrome_cookies_to_saved(cookies),
+        "imported_at": _dt.datetime.now().isoformat(timespec="seconds"),
+    }
+    p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf8")
+    return len(payload["cookies"])
+
+
+async def _require_real_login() -> dict:
+    """真实登录校验（采集/搜索前置，解决「纸面登录」空跑问题）。
+
+    纸面登录态（本地 cookies.json 副本）≠ 目标调试 Chrome 内真实会话有效：
+    小红书 Cookie 有效期短（数小时~数天），副本可能「未过期」而真实会话早已失效，
+    导致采集打开页面停在登录界面、一条都采不到。
+
+    校验/恢复链路（三层）：
+    ① 目标 Chrome（独立 Profile）Cookie 库 → 有有效 web_session → OK；
+    ② 无 → 自动读取日常 Chrome（用户已登录账号，如 Vicky）的有效 Cookie，
+       落盘 cookies.json 并注入目标浏览器 → 恢复成功（方案 A 自动化，无需扫码）；
+    ③ 都没有 → 拦截，提示扫码/导入。
+    """
+    from codex_xhs import browser_client, cookie_reader
+    try:
+        _, profile_dir = browser_client._profile_settings()
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "code": "cfg_fail", "note": f"读取 CDP 配置失败: {str(e)[:80]}"}
+    profile_dir = os.path.expanduser(profile_dir)
+
+    # ① 目标 Chrome（独立 Profile）真实校验
+    db = _target_chrome_cookie_db(profile_dir)
+    now_us = int(time.time() * 1_000_000)
+    if db is not None:
+        try:
+            cookies = cookie_reader.read_cookie_db(db)
+            ws = next(
+                (c for c in cookies
+                 if c.get("name") == "web_session"
+                 and c.get("value") and int(c.get("expires") or 0) > now_us),
+                None,
+            )
+            if ws:
+                return {"ok": True, "code": "ok", "note": "目标 Chrome 真实登录有效"}
+        except Exception as e:  # noqa: BLE001
+            return {
+                "ok": False, "code": "read_fail",
+                "note": f"读取目标 Chrome 登录态失败: {str(e)[:100]}",
+            }
+    elif db is None and os.environ.get("XHS_BROWSER_MODE") != "profile":
+        # 非独立 Profile 模式（连日常 Chrome 采集）：目标即日常 Chrome，直接校验其 Cookie
+        try:
+            cookies = cookie_reader.read_chrome_cookies()
+            ws = next(
+                (c for c in cookies
+                 if c.get("name") == "web_session"
+                 and c.get("value") and int(c.get("expires") or 0) > now_us),
+                None,
+            )
+            if ws:
+                return {"ok": True, "code": "ok", "note": "日常 Chrome 真实登录有效"}
+        except Exception as e:  # noqa: BLE001
+            return {
+                "ok": False, "code": "read_fail",
+                "note": f"读取 Chrome 登录态失败: {str(e)[:100]}",
+            }
+
+    # ② 自动恢复：读日常 Chrome（用户已登录账号，如 Vicky）→ 落盘 → 注入目标浏览器
+    try:
+        daily = cookie_reader.read_chrome_cookies()
+        ws2 = next(
+            (c for c in daily
+             if c.get("name") == "web_session"
+             and c.get("value") and int(c.get("expires") or 0) > now_us),
+            None,
+        )
+        if ws2:
+            n = _persist_restored_cookies(daily)
+            try:
+                await browser_client.inject_saved_cookies_now()
+            except Exception:  # noqa: BLE001
+                pass  # 未连接则下次连接自动注入
+            return {
+                "ok": True, "code": "restored",
+                "note": f"已自动读取日常 Chrome 登录态恢复（{n} 条 Cookie，账号已登录），无需扫码",
+            }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "ok": False, "code": "daily_fail",
+            "note": f"目标 Chrome 未登录，读取日常 Chrome 登录态失败: {str(e)[:80]}（可能需先在钥匙串授权）",
+        }
+
+    # ③ 都没有 → 拦截
+    return {
+        "ok": False, "code": "not_logged_in",
+        "note": "目标 Chrome 与日常 Chrome 均无有效小红书登录态：请扫码登录，或导入有效 Cookie 后重试",
+    }
+
+
 async def _require_login():
     """登录态熔断：搜索/克隆/采集客户前检查登录态（30s 缓存，不反复连 Chrome）。
-    仅当明确判定为「未登录」时拦截；检测异常（unknown）放行，避免误伤。"""
+    双重校验：① 本地导入 Cookie（纸面）② 目标调试 Chrome 真实会话（防空跑）。
+    任一明确失效即拦截并给出恢复指引。"""
     st = await login_status()
     if st.get("status") == "not_logged_in":
         raise HTTPException(
             403,
             "小红书登录态已失效：请导入有效 Cookie（左侧面板「导入 Cookie」）或去 Chrome 扫码登录后重试",
         )
+    real = await _require_real_login()
+    if not real.get("ok"):
+        raise HTTPException(403, real.get("note", "目标 Chrome 未登录小红书，请先扫码登录或导入 Cookie"))
 
 
 @app.post("/api/search")

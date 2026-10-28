@@ -25,6 +25,14 @@ _EXTRACT_SRC = (_ROOT / "extension" / "lib" / "extract.js").read_text(encoding="
 _PRESS_SCRIPT = _ROOT / "scripts" / "browser" / "cdp" / "press_allow.applescript"
 _XHS = "https://www.xiaohongshu.com"
 
+
+class BrowserLoginRequiredError(Exception):
+    """搜索页被登录墙 / 风控验证拦截：Cookie 在但页面要求登录或验证（无法正常采集）。
+
+    采集链路捕获后应中止任务并给出明确提示（会话失效 或 触发风控需人工验证），
+    绝不继续空转滚动。"""
+
+
 _pw = None
 _browser = None
 _connect_lock: asyncio.Lock | None = None
@@ -123,6 +131,19 @@ async def _inject_saved_cookies():
         return True
     except Exception:  # noqa: BLE001
         return False
+
+
+async def inject_saved_cookies_now() -> bool:
+    """真实登录校验恢复后由 server 调用：若浏览器已连接，立即注入 cookies.json。
+
+    未连接时返回 False（幂等）：下次 get_browser() 连接成功会自动注入，无需额外处理。
+    """
+    if _browser is not None and _browser.is_connected():
+        try:
+            return await _inject_saved_cookies()
+        except Exception:  # noqa: BLE001
+            return False
+    return False
 
 
 _CDP_CONFIG = _ROOT / "data" / "cdp_config.json"
@@ -626,18 +647,47 @@ async def stop_profile():
     return True
 
 
-async def _wait_note_cards(page, timeout_s: float = 45) -> bool:
-    """等待搜索页出现笔记卡片（section.note-item）。SPA 渲染慢，返回是否出现。"""
+async def _detect_login_wall(page) -> str:
+    """检测搜索页是否被「登录墙 / 风控验证」拦截。
+
+    Cookie 真实有效也可能出现：小红书风控对异常行为/环境发起验证，页面表现为
+    登录引导或验证码。此时必须中止采集（空转滚动只会加重风控），返回原因描述；
+    页面正常返回 ""。检测轻量：URL + 首屏文本片段，不做整页遍历。
+    """
+    try:
+        if "/login" in page.url:
+            return "页面已跳转登录（小红书会话失效，请重新扫码或导入 Cookie）"
+        text = await page.evaluate(
+            "() => document.body ? document.body.innerText.slice(0, 1500) : ''"
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+    for kw in ("扫码登录", "登录后查看", "请先登录", "完成验证", "安全验证", "验证码"):
+        if kw in text:
+            return f"页面出现「{kw}」（Cookie 有效但被小红书风控拦截，需人工扫码/验证后重试）"
+    return ""
+
+
+async def _wait_note_cards(page, timeout_s: float = 45) -> tuple[bool, str]:
+    """等待搜索页出现笔记卡片（section.note-item）。SPA 渲染慢，返回 (是否出现, 登录墙原因)。
+
+    - 出现卡片 → (True, "")
+    - 检测到登录墙/风控验证 → 提前返回 (False, 原因)，不等满超时
+    - 超时无卡片 → (False, "")
+    """
     deadline = time.time() + timeout_s
     while time.time() < deadline:
+        wall = await _detect_login_wall(page)
+        if wall:
+            return False, wall
         try:
             n = await page.evaluate("() => document.querySelectorAll('section.note-item').length")
         except Exception:  # noqa: BLE001
             n = 0
         if n > 0:
-            return True
+            return True, ""
         await asyncio.sleep(2.5)
-    return False
+    return False, ""
 
 
 async def _apply_filters(page, filters: dict):
@@ -684,20 +734,33 @@ async def _apply_filters(page, filters: dict):
 
 
 async def _prepare_search_page(keyword: str, filters: dict | None = None):
-    """打开搜索页并等卡片渲染；新版 AI 搜索页（无 note-item）回退旧版 URL。返回可用 page。"""
+    """打开搜索页并等卡片渲染；新版 AI 搜索页（无 note-item）回退旧版 URL。返回可用 page。
+
+    检测登录墙/风控验证：Cookie 在但页面要求登录或验证时，立即抛
+    BrowserLoginRequiredError（不空等、不空跑），由采集链路中止任务并提示人工处理。
+    """
     url = _XHS + "/search_result?keyword=" + _urlencode(keyword) + "&source=web_search_result_notes"
     page = await _load(url, 2500)
-    appeared = await _wait_note_cards(page, timeout_s=45)
+    appeared, wall = await _wait_note_cards(page, timeout_s=45)
+    if wall:
+        await _close_page_safe(page)
+        raise BrowserLoginRequiredError(wall)
     if not appeared:
         # AI 搜索页（无 section.note-item）→ 回退无 source 的旧版搜索
         await _close_page_safe(page)
         page = await _load(_XHS + "/search_result?keyword=" + _urlencode(keyword), 2500)
-        appeared = await _wait_note_cards(page, timeout_s=45)
+        appeared, wall = await _wait_note_cards(page, timeout_s=45)
+        if wall:
+            await _close_page_safe(page)
+            raise BrowserLoginRequiredError(wall)
     if appeared:
         # 应用筛选条件后再采集（页面可能刷新，需再次等待卡片）
         await _apply_filters(page, filters or {})
         if filters:
-            await _wait_note_cards(page, timeout_s=30)
+            _, wall = await _wait_note_cards(page, timeout_s=30)
+            if wall:
+                await _close_page_safe(page)
+                raise BrowserLoginRequiredError(wall)
     return page
 
 

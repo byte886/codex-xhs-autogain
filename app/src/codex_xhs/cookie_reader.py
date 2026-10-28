@@ -223,14 +223,17 @@ def _decrypt_cookie_blob(key: bytes, blob: bytes, value: str | None, strip_integ
     return value or ""
 
 
-def read_chrome_cookies(domain_filter: str = "xiaohongshu.com") -> list[dict]:
-    """读取 Chrome 登录态 Cookie（指定域名），返回 [{name, value, domain, path, expires}]。
+def read_cookie_db(db_path: str, domain_filter: str = "xiaohongshu.com") -> list[dict]:
+    """从指定 Cookies 库读取并解密 Cookie（指定 Profile 场景：独立调试 Chrome）。
 
+    与 read_chrome_cookies() 的区别：不自动挑选 Profile，而是精确读取调用方指定的
+    Cookies SQLite 库（如独立调试 Chrome 的 ~/.codex-xhs-profile/Default/Network/Cookies），
+    用于「真实登录态校验」：目标浏览器里 web_session 是否真实有效。
+    返回 [{name, value, domain, path, expires}]，expires 为 Chrome 微秒时间戳。
     依赖：cryptography（app/.venv 已装）。未授权时触发系统钥匙串授权弹窗。
     """
-    db_path = _chrome_cookie_db_path()
     if not os.path.exists(db_path):
-        raise ChromeCookieReadError("未找到 Chrome Cookie 库，请先安装并登录 Chrome")
+        raise ChromeCookieReadError(f"未找到 Chrome Cookie 库: {db_path}")
 
     key = _get_decryption_key()
 
@@ -266,6 +269,17 @@ def read_chrome_cookies(domain_filter: str = "xiaohongshu.com") -> list[dict]:
             "expires": exp_utc,
         })
     return out
+
+
+def read_chrome_cookies(domain_filter: str = "xiaohongshu.com") -> list[dict]:
+    """读取 Chrome 登录态 Cookie（自动挑选最可能的 Profile），返回 [{name, value, domain, path, expires}]。
+
+    依赖：cryptography（app/.venv 已装）。未授权时触发系统钥匙串授权弹窗。
+    """
+    db_path = _chrome_cookie_db_path()
+    if not os.path.exists(db_path):
+        raise ChromeCookieReadError("未找到 Chrome Cookie 库，请先安装并登录 Chrome")
+    return read_cookie_db(db_path, domain_filter)
 
 
 def cookies_to_text(cookies: list[dict]) -> str:
