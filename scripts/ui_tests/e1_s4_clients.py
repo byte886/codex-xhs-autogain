@@ -29,11 +29,18 @@ with sync_playwright() as p:
     client_btn.click()
     print("已点击采集客户")
 
-    pg.wait_for_timeout(30000)  # 采集客户访问真实页面 30-90s
-    tab_state = pg.evaluate("""() => {
-        const t = [...document.querySelectorAll('.tab')];
-        const cur = t.find(x => x.className.includes('cur'));
-        return cur ? cur.innerText.trim() : '(无)';
-    }""")
-    print("30s后当前Tab:", tab_state)
+    # 轮询等待（采集真实访问页面 30-90s，固定等待不可靠）：最多 90s，每 5s 查当前 tab
+    import time
+    t0 = time.time()
+    cur_tab = '(未知)'
+    while time.time() - t0 < 90:
+        pg.wait_for_timeout(5000)
+        cur_tab = pg.evaluate("""() => {
+            const t = [...document.querySelectorAll('.tab')];
+            const cur = t.find(x => x.className.includes('cur'));
+            return cur ? cur.innerText.trim() : '(无)';
+        }""")
+        if '客户' in cur_tab:
+            break
+    print("最终当前Tab:", cur_tab)
     b.close()

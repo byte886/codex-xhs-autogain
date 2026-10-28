@@ -35,19 +35,18 @@ with sync_playwright() as p:
     print("2) Key输入框:", key_input.count())
     if key_input.count():
         key_input.fill('sk-test-123456')
-        for ph in ['base', 'Base', '模型', 'model']:
-            el = pg.locator(f'input[placeholder*="{ph}"], input[placeholder*="{ph.title()}"]').first
-            if el.count() and not el.evaluate("el => el.type === 'password'"):
-                el.fill('https://api.openai.com/v1')
-                break
+        # Base URL / 模型：placeholder 精确/特征匹配（"https://api.openai.com/v1" 不含 base/模型字样）
+        base_el = pg.locator('input[placeholder="https://api.openai.com/v1"]').first
+        if base_el.count():
+            base_el.fill('https://api.openai.com/v1')
+        model_el = pg.locator('input[placeholder*="gpt-4o-mini"]').first
+        if model_el.count():
+            model_el.fill('gpt-4o-mini')
         pg.locator('button', has_text='保存配置').first.click()
         pg.wait_for_timeout(1500)
-        masked = pg.evaluate("""() => {
-            const m = [...document.querySelectorAll('input')].map(i => i.value).filter(v => v && /sk-/.test(v));
-            const badge = document.body.innerText.match(/AI Key[^\\n]*/);
-            return {maskedInputs: m, badge: badge ? badge[0] : '(无)'};
-        }""")
-        print("3) 保存后掩码/状态:", masked)
+        # 顶部状态条是 button（"AI Key 已配置/未配置"），勿匹配页面标题"AI Key / CDP / 账号人设"
+        badge = pg.evaluate("""() => [...document.querySelectorAll('button')].filter(b => /AI Key/.test(b.innerText)).map(b => b.innerText.trim())""")
+        print("3) 保存后状态条:", badge)
 
     # 3) CDP 区
     cdp_txt = pg.evaluate("""() => {
@@ -57,17 +56,21 @@ with sync_playwright() as p:
     }""")
     print("4) CDP 区:", cdp_txt)
 
-    # 4) 账号人设：填 + 保存
-    p_inputs = pg.locator('input').all()
+    # 4) 账号人设：填 + 保存（placeholder 特征词：珠宝翡翠/干货型/逗号分隔——勿用"行业/语气/话题"）
+    persona_fill = [
+        ('input[placeholder*="珠宝翡翠"]', '玉石珠宝'),
+        ('input[placeholder*="干货型"]', '专业温和'),
+        ('input[placeholder*="逗号分隔"]', '南红,手串,翡翠'),
+    ]
     filled = 0
-    for i in range(len(p_inputs)):
-        ph = p_inputs[i].get_attribute('placeholder') or ''
-        if '行业' in ph or '语气' in ph or '话题' in ph:
-            p_inputs[i].fill('玉石珠宝' if '行业' in ph else ('专业温和' if '语气' in ph else '南红,手串,翡翠'))
+    for sel, val in persona_fill:
+        el = pg.locator(sel).first
+        if el.count():
+            el.fill(val)
             filled += 1
     print("5) 人设输入框填充:", filled)
     if filled:
-        pg.locator('button', has_text='保存').first.click()
+        pg.locator('button', has_text='保存人设').first.click()
         pg.wait_for_timeout(1000)
         toast = pg.evaluate("""() => {
             const t = document.querySelector('[class*=toast]');
@@ -80,6 +83,6 @@ with sync_playwright() as p:
     if clear_btn.count():
         clear_btn.click()
         pg.wait_for_timeout(1500)
-        badge2 = pg.evaluate("() => document.body.innerText.match(/AI Key[^\\n]*/)?.[0] || '(无)'")
+        badge2 = pg.evaluate("""() => [...document.querySelectorAll('button')].filter(b => /AI Key/.test(b.innerText)).map(b => b.innerText.trim())""")
         print("7) 清除后状态条:", badge2)
     b.close()

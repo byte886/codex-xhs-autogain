@@ -49,9 +49,11 @@ with sync_playwright() as p:
         route.continue_()
     pg.route('**/api/collect_start', on_req)
 
-    kw = pg.locator('input').first
+    # 关键词输入框（placeholder 含"输入关键词"）+ 上限 number 输入框（产品迭代：上限从 select 改为 number）
+    kw = pg.locator('input[placeholder*="关键词"]').first
     kw.fill('南红玛瑙手串')
-    pg.locator('select >> nth=0').select_option('15')  # 上限 15（低频小量）
+    limit_in = pg.locator('input[type="number"]').first
+    limit_in.fill('15')
     pg.locator('button', has_text='开始采集').first.click()
     print("CLICKED 开始采集")
     pg.wait_for_timeout(3000)

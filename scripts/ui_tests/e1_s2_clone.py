@@ -45,11 +45,11 @@ with sync_playwright() as p:
     print("CLONE_REQ:", clones)
     create_tab = pg.locator('.tab', has_text='创作').first
     print("创作tab class:", create_tab.get_attribute('class'))
-    tin = pg.locator('input[placeholder*="标题"], textarea[placeholder*="标题"], .title-input').first
+    tin = pg.locator('input[maxlength="50"]').first  # 标题框（踩坑：用 maxlength 勿用 placeholder 匹配）
     print("标题值:", tin.input_value()[:40] if tin.count() else '(无输入框)')
-    imgs = pg.locator('.pub-images img, .img-list img, .thumb img')
+    imgs = pg.locator('.pub-img img')  # 图片容器 .pub-imgs > .pub-img > img
     print("PUB_IMAGES(15s):", imgs.count())
     pg.wait_for_timeout(10000)
-    print("PUB_IMAGES(25s):", pg.locator('.pub-images img, .img-list img, .thumb img').count())
+    print("PUB_IMAGES(25s):", pg.locator('.pub-img img').count())
     print("失败:", errs[:3])
     b.close()

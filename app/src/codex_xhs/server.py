@@ -41,6 +41,7 @@ IMAGES_DIR = BASE / "data" / "images"
 _INTERVAL = (1.0, 1.8)
 
 from codex_xhs.score import rank_notes, _to_int  # noqa: E402
+from codex_xhs.jsonio import read_json_safe, write_json  # noqa: E402
 from codex_xhs.collect_pipeline import (  # noqa: E402
     get_feed_detail,
     get_note_detail_by_url,
@@ -559,6 +560,57 @@ def _persist_restored_cookies(cookies: list) -> int:
     return len(payload["cookies"])
 
 
+def _has_valid_web_session(cookies: list[dict], now_us: int) -> bool:
+    """cookie 列表中是否存在未过期的有效 web_session。"""
+    return any(
+        c.get("name") == "web_session"
+        and c.get("value")
+        and int(c.get("expires") or 0) > now_us
+        for c in cookies
+    )
+
+
+async def _check_target_or_daily(browser_client, cookie_reader, profile_dir: str, now_us: int) -> dict | None:
+    """① 目标 Chrome（独立 Profile）真实校验；非独立 Profile 模式直接校验日常 Chrome。
+
+    返回命中结果 dict；都未命中返回 None（继续走恢复链路）。
+    """
+    db = _target_chrome_cookie_db(profile_dir)
+    try:
+        if db is not None:
+            if _has_valid_web_session(cookie_reader.read_cookie_db(db), now_us):
+                return {"ok": True, "code": "ok", "note": "目标 Chrome 真实登录有效"}
+        elif os.environ.get("XHS_BROWSER_MODE") != "profile":
+            # 非独立 Profile 模式（连日常 Chrome 采集）：目标即日常 Chrome，直接校验其 Cookie
+            if _has_valid_web_session(cookie_reader.read_chrome_cookies(), now_us):
+                return {"ok": True, "code": "ok", "note": "日常 Chrome 真实登录有效"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "code": "read_fail", "note": f"读取 Chrome 登录态失败: {str(e)[:100]}"}
+    return None
+
+
+async def _try_restore_daily(browser_client, cookie_reader, now_us: int) -> dict | None:
+    """② 自动恢复：读日常 Chrome（用户已登录账号）→ 落盘 → 注入目标浏览器。"""
+    try:
+        daily = cookie_reader.read_chrome_cookies()
+        if _has_valid_web_session(daily, now_us):
+            n = _persist_restored_cookies(daily)
+            try:
+                await browser_client.inject_saved_cookies_now()
+            except Exception:  # noqa: BLE001
+                pass  # 未连接则下次连接自动注入
+            return {
+                "ok": True, "code": "restored",
+                "note": f"已自动读取日常 Chrome 登录态恢复（{n} 条 Cookie，账号已登录），无需扫码",
+            }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "ok": False, "code": "daily_fail",
+            "note": f"目标 Chrome 未登录，读取日常 Chrome 登录态失败: {str(e)[:80]}（可能需先在钥匙串授权）",
+        }
+    return None
+
+
 async def _require_real_login() -> dict:
     """真实登录校验（采集/搜索前置，解决「纸面登录」空跑问题）。
 
@@ -578,68 +630,15 @@ async def _require_real_login() -> dict:
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "code": "cfg_fail", "note": f"读取 CDP 配置失败: {str(e)[:80]}"}
     profile_dir = os.path.expanduser(profile_dir)
-
-    # ① 目标 Chrome（独立 Profile）真实校验
-    db = _target_chrome_cookie_db(profile_dir)
     now_us = int(time.time() * 1_000_000)
-    if db is not None:
-        try:
-            cookies = cookie_reader.read_cookie_db(db)
-            ws = next(
-                (c for c in cookies
-                 if c.get("name") == "web_session"
-                 and c.get("value") and int(c.get("expires") or 0) > now_us),
-                None,
-            )
-            if ws:
-                return {"ok": True, "code": "ok", "note": "目标 Chrome 真实登录有效"}
-        except Exception as e:  # noqa: BLE001
-            return {
-                "ok": False, "code": "read_fail",
-                "note": f"读取目标 Chrome 登录态失败: {str(e)[:100]}",
-            }
-    elif db is None and os.environ.get("XHS_BROWSER_MODE") != "profile":
-        # 非独立 Profile 模式（连日常 Chrome 采集）：目标即日常 Chrome，直接校验其 Cookie
-        try:
-            cookies = cookie_reader.read_chrome_cookies()
-            ws = next(
-                (c for c in cookies
-                 if c.get("name") == "web_session"
-                 and c.get("value") and int(c.get("expires") or 0) > now_us),
-                None,
-            )
-            if ws:
-                return {"ok": True, "code": "ok", "note": "日常 Chrome 真实登录有效"}
-        except Exception as e:  # noqa: BLE001
-            return {
-                "ok": False, "code": "read_fail",
-                "note": f"读取 Chrome 登录态失败: {str(e)[:100]}",
-            }
 
-    # ② 自动恢复：读日常 Chrome（用户已登录账号，如 Vicky）→ 落盘 → 注入目标浏览器
-    try:
-        daily = cookie_reader.read_chrome_cookies()
-        ws2 = next(
-            (c for c in daily
-             if c.get("name") == "web_session"
-             and c.get("value") and int(c.get("expires") or 0) > now_us),
-            None,
-        )
-        if ws2:
-            n = _persist_restored_cookies(daily)
-            try:
-                await browser_client.inject_saved_cookies_now()
-            except Exception:  # noqa: BLE001
-                pass  # 未连接则下次连接自动注入
-            return {
-                "ok": True, "code": "restored",
-                "note": f"已自动读取日常 Chrome 登录态恢复（{n} 条 Cookie，账号已登录），无需扫码",
-            }
-    except Exception as e:  # noqa: BLE001
-        return {
-            "ok": False, "code": "daily_fail",
-            "note": f"目标 Chrome 未登录，读取日常 Chrome 登录态失败: {str(e)[:80]}（可能需先在钥匙串授权）",
-        }
+    hit = await _check_target_or_daily(browser_client, cookie_reader, profile_dir, now_us)
+    if hit:
+        return hit
+
+    restored = await _try_restore_daily(browser_client, cookie_reader, now_us)
+    if restored:
+        return restored
 
     # ③ 都没有 → 拦截
     return {
@@ -1932,14 +1931,11 @@ class PersonaReq(BaseModel):
 
 
 def _load_persona() -> dict:
-    try:
-        return json.loads(PERSONA_PATH.read_text(encoding="utf8"))
-    except Exception:
-        return {}
+    return read_json_safe(PERSONA_PATH)
 
 
 def _save_persona(d: dict) -> dict:
-    PERSONA_PATH.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf8")
+    write_json(PERSONA_PATH, d)
     return d
 
 

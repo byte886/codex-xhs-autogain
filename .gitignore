@@ -39,6 +39,12 @@ data/cookies*.bak
 data/cookies*
 /.venv
 
+# --- 本地敏感配置与 Chrome 调试 Profile（绝不入库） ---
+data/cdp_config.json
+data/llm_config.json
+data/persona.json
+data/chrome-profile/
+
 # gauntlet 工具产物
 .metrics/
 target/

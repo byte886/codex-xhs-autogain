@@ -12,6 +12,8 @@ from pathlib import Path
 
 import httpx
 
+from .jsonio import read_json_safe, write_json
+
 # 与 server.py 同基准：~/Desktop/codex-zhuke
 _ROOT = Path(__file__).resolve().parents[3]
 CONFIG_PATH = _ROOT / "data" / "llm_config.json"
@@ -19,14 +21,11 @@ _TIMEOUT = httpx.Timeout(60.0, connect=15.0)
 
 
 def _load() -> dict:
-    try:
-        return json.loads(CONFIG_PATH.read_text(encoding="utf8"))
-    except Exception:  # noqa: BLE001
-        return {}
+    return read_json_safe(CONFIG_PATH)
 
 
 def _save(cfg: dict) -> dict:
-    CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf8")
+    write_json(CONFIG_PATH, cfg)
     return cfg
 
 
