@@ -1,4 +1,6 @@
-"""浏览器客户端纯逻辑单测：滚动采集终止判定 + URL 编码。"""
+"""浏览器客户端纯逻辑单测：滚动采集终止判定 + URL 编码 + CDP 路径可移植性。"""
+import os
+
 from codex_xhs import browser_client as bc
 
 
@@ -27,3 +29,40 @@ class TestShouldStopCollect:
 class TestUrlEncode:
     def test_quote_space(self):
         assert bc._urlencode("a b") == "a%20b"
+
+
+class TestHomeRelative:
+    """save_cdp_config 路径可移植：$HOME 下绝对路径 → ~ 相对形式。"""
+
+    def test_home_prefix_to_tilde(self):
+        home = os.path.expanduser("~")
+        assert bc._home_relative(home + "/.codex-xhs-profile") == "~/.codex-xhs-profile"
+
+    def test_home_itself_to_tilde(self):
+        assert bc._home_relative(os.path.expanduser("~")) == "~"
+
+    def test_non_home_path_unchanged(self):
+        assert bc._home_relative("/Applications/Google Chrome.app") == "/Applications/Google Chrome.app"
+        assert bc._home_relative("/x") == "/x"
+
+    def test_empty_unchanged(self):
+        assert bc._home_relative("") == ""
+
+    def test_profile_settings_expands_tilde(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "cdp_config.json"
+        cfg.write_text('{"profile_dir": "~/.codex-xhs-profile"}', encoding="utf-8")
+        monkeypatch.setattr(bc, "_CDP_CONFIG", cfg)
+        monkeypatch.delenv("XHS_PROFILE_DIR", raising=False)
+        _, profile_dir = bc._profile_settings()
+        assert profile_dir == os.path.expanduser("~/.codex-xhs-profile")
+        assert not profile_dir.startswith("~")
+
+    def test_save_cdp_config_normalizes(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "cdp_config.json"
+        monkeypatch.setattr(bc, "_CDP_CONFIG", cfg)
+        home = os.path.expanduser("~")
+        bc.save_cdp_config(chrome_path="/Applications/Google Chrome.app",
+                           profile_dir=home + "/.codex-xhs-profile")
+        saved = bc._load_cdp_config()
+        assert saved["profile_dir"] == "~/.codex-xhs-profile"
+        assert saved["chrome_path"] == "/Applications/Google Chrome.app"

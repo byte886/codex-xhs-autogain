@@ -128,6 +128,24 @@ async def _inject_saved_cookies():
 _CDP_CONFIG = _ROOT / "data" / "cdp_config.json"
 
 
+def _home_relative(p: str) -> str:
+    """把 $HOME 下的绝对路径规范化为 ~ 相对形式（可移植：换用户/换机不失效）。
+
+    仅转换 $HOME 前缀（含整 HOME 本身）；其余绝对路径（如 /Applications/...）保持原样。
+    """
+    if not p:
+        return p
+    home = os.path.expanduser("~")
+    try:
+        if p == home:
+            return "~"
+        if p.startswith(home + os.sep):
+            return "~" + p[len(home):]
+    except Exception:  # noqa: BLE001
+        pass
+    return p
+
+
 def _load_cdp_config() -> dict:
     """读取用户自定义的 Chrome 路径 / Profile 路径配置（无则空）。"""
     try:
@@ -139,12 +157,16 @@ def _load_cdp_config() -> dict:
 
 
 def save_cdp_config(chrome_path: str = "", profile_dir: str = "") -> dict:
-    """保存用户自定义 Chrome 路径 / Profile 路径（持久化，跨会话保留）。"""
+    """保存用户自定义 Chrome 路径 / Profile 路径（持久化，跨会话保留）。
+
+    路径先经 _home_relative 规范化为 ~ 相对形式，保证跨用户/跨机可移植
+    （读取侧统一 expanduser 展开）。
+    """
     cfg = _load_cdp_config()
     if chrome_path:
-        cfg["chrome_path"] = chrome_path
+        cfg["chrome_path"] = _home_relative(chrome_path)
     if profile_dir:
-        cfg["profile_dir"] = profile_dir
+        cfg["profile_dir"] = _home_relative(profile_dir)
     _CDP_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     _CDP_CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
     return cfg
@@ -158,8 +180,10 @@ def chrome_executable() -> str | None:
     → 卸载注册表 → 常见安装路径（%LOCALAPPDATA% / Program Files / Program Files (x86)）。
     """
     user_path = _load_cdp_config().get("chrome_path")
-    if user_path and os.path.exists(user_path):
-        return user_path
+    if user_path:
+        user_path = os.path.expanduser(user_path)
+        if os.path.exists(user_path):
+            return user_path
     if sys.platform == "darwin":
         return _mac_chrome_candidates()
     if os.name == "nt":
@@ -219,8 +243,9 @@ def _profile_settings() -> tuple[int, str]:
     """
     port = int(os.environ.get("XHS_PROFILE_PORT", "9223"))
     cfg = _load_cdp_config()
-    profile_dir = cfg.get("profile_dir") or os.environ.get("XHS_PROFILE_DIR") or os.path.join(
-        os.path.expanduser("~"), ".codex-xhs-profile"
+    profile_dir = os.path.expanduser(
+        cfg.get("profile_dir") or os.environ.get("XHS_PROFILE_DIR")
+        or os.path.join(os.path.expanduser("~"), ".codex-xhs-profile")
     )
     return port, profile_dir
 
