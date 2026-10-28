@@ -677,7 +677,12 @@ async def _prepare_search_page(keyword: str, filters: dict | None = None):
 
 
 async def _drain_page(page, items: list, seen: set) -> int:
-    """提取当前页可见卡片并入 items（广告卡过滤 + 去重）。返回新增条数。"""
+    """提取当前页可见卡片并入 items（广告卡过滤 + 去重）。返回新增条数。
+
+    提取前必须注入 _EXTRACT_SRC：SPA 页面刷新/筛选点击会丢失 window 全局函数，
+    每次提取前重新注入（幂等，开销可忽略）。
+    """
+    await page.evaluate(_EXTRACT_SRC)  # 注入提取脚本（xhsExtractSearchNotes 等）
     got = await page.evaluate("() => xhsExtractSearchNotes()")
     added = 0
     for it in got:
