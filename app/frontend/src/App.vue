@@ -75,8 +75,10 @@ async function collectClients(note: Note) {
       return
     }
     const data = await resp.json()
+    const sum = data.summary || {}
+    const hi = sum['高意向'] ? `，高意向 ${sum['高意向']} 条` : ''
     toast(data.total > 0
-      ? `采集到 ${data.total} 位互动用户（新增 ${data.new}），已入库`
+      ? `采集到 ${data.total} 位互动用户（新增 ${data.new}）${hi}，已入库`
       : '未采集到互动用户（可能无评论或需登录）')
   } catch {
     toast('采集失败：网络错误')

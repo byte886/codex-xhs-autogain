@@ -12,12 +12,26 @@ const emit = defineEmits<{
 }>()
 
 const filterText = ref('')
-// P2 作者价值聚合 + P4 客户库：笔记 / 作者榜 / 客户库 视图切换
+// P2 作者价值聚合 + P4/O1-3 客户库：笔记 / 作者榜 / 客户库 视图切换
 const view = ref<'notes' | 'authors' | 'clients'>('notes')
 const authors = ref<Author[]>([])
 const authorsLoaded = ref(false)
 const clients = ref<ClientUser[]>([])
 const clientsLoaded = ref(false)
+/** O1-3 意向筛选：'' 全部 / high 高意向 / 7d 近7天 */
+const clIntent = ref('')
+const clTab = ref<'all' | 'high' | '7d'>('all')
+
+// O1-3 意向档位展示映射（与后端 intent.py 一致）
+const INTENT_META: Record<string, { label: string; cls: string }> = {
+  high: { label: '高意向', cls: 'i-high' },
+  upper: { label: '上意向', cls: 'i-upper' },
+  middle: { label: '中意向', cls: 'i-mid' },
+  low: { label: '低意向', cls: 'i-low' },
+}
+const intentOf = (c: ClientUser) => c.intent || 'low'
+const intentLabel = (c: ClientUser) => INTENT_META[intentOf(c)]?.label || '低意向'
+const intentCls = (c: ClientUser) => INTENT_META[intentOf(c)]?.cls || 'i-low'
 
 function fmtTime(s: number) {
   const m = Math.floor(s / 60)
@@ -65,17 +79,71 @@ function pickAuthor(a: Author) {
   filterText.value = a.nickname || a.user_id
 }
 
+/** 客户库：按意向/时间筛选重取（all/high/7d） */
+async function loadClients() {
+  try {
+    let intent = ''
+    if (clTab.value === 'high') intent = 'high'
+    const res = await apiClientsList('', intent)
+    let list = res.clients || []
+    if (clTab.value === '7d') {
+      const weekAgo = Date.now() - 7 * 86400_000
+      list = list.filter((c) => {
+        const t = c.created_at ? new Date(c.created_at).getTime() : 0
+        return t >= weekAgo
+      })
+    }
+    clients.value = list
+  } catch {
+    clients.value = []
+  }
+}
+
 async function showClients() {
   view.value = 'clients'
   if (!clientsLoaded.value) {
-    try {
-      const res = await apiClientsList()
-      clients.value = res.clients || []
-      clientsLoaded.value = true
-    } catch {
-      clients.value = []
-    }
+    await loadClients()
+    clientsLoaded.value = true
   }
+}
+
+async function setClTab(tab: 'all' | 'high' | '7d') {
+  clTab.value = tab
+  await loadClients()
+}
+
+/** O1-3 统计：总数 / 高意向数 / 留联系方式命中 */
+function clSummary() {
+  let high = 0
+  let contact = 0
+  for (const c of clients.value) {
+    if (c.intent === 'high') high += 1
+    if (c.intent === 'high' && /微信|vx|v信|卫星|手机|电话|滴滴|私信|si me|si 我|si我|v /.test((c.matched_word || '') + (c.sample_comment || '').toLowerCase())) contact += 1
+  }
+  return { total: clients.value.length, high, contact }
+}
+
+/** O1-3 导出线索 CSV（昵称/主页链接/评论原文/命中词/IP属地/意向） */
+function exportClientsCsv() {
+  const head = ['昵称', '主页链接', '评论原文', '命中词', 'IP属地', '意向', '采集时间']
+  const rows = clients.value.map((c) => [
+    c.nickname || '', c.profile || '', (c.sample_comment || '').replace(/"/g, '""'),
+    c.matched_word || '', c.ip_location || '', intentLabel(c), (c.created_at || '').slice(0, 10),
+  ])
+  const csv = '\ufeff' + [head, ...rows].map((r) => r.map((v) => `"${v}"`).join(',')).join('\n')
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+  a.download = `线索导出_${new Date().toISOString().slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+/** O1-3 去私信：入口占位（私信话术模块 S3 开发中，接通后跳话术视图） */
+function goTalk(c: ClientUser) {
+  // 打开用户主页 + 提示（话术模块在 S3 接通）
+  if (c.profile) window.open(c.profile, '_blank')
+  // eslint-disable-next-line no-alert
+  alert('私信话术模块开发中（下一步接通）：将基于昵称/属地/意向/原评论生成话术，由你确认后发送。')
 }
 
 function openProfile(p: string | null) {
@@ -162,24 +230,48 @@ function openProfile(p: string | null) {
         </div>
       </div>
 
-      <!-- 客户库（P4）：已采集互动用户按互动足迹聚合，足迹多 = 更活跃更有价值 -->
-      <div v-else-if="view === 'clients'" class="author-grid">
+      <!-- 客户库（O1-3）：评论区线索列表 —— 意向分级/高意向置顶/属地/命中词/去私信/导出 CSV -->
+      <div v-else-if="view === 'clients'">
         <div v-if="!clients.length" class="empty" style="padding:40px 0">
           <div class="big">暂无客户</div>
-          <p>在卡片上点「采集客户」抓取笔记评论区的互动用户，会在这里按互动足迹聚合</p>
+          <p>在卡片上点「采集客户」抓取笔记评论区的互动用户，会在这里按意向分级展示（高意向置顶）</p>
         </div>
-        <div v-for="c in clients" :key="c.uid" class="author-card">
-          <div class="au-top">
-            <div class="au-avatar au-ph">{{ (c.nickname || '客')[0] }}</div>
-            <div class="au-name">
-              <div class="au-nick">{{ c.nickname || '未知用户' }}</div>
-              <div class="au-sub">足迹 {{ c.comment_count }} 次 · 关联 {{ c.note_count }} 篇笔记</div>
+        <template v-else>
+          <div class="info-bar">
+            <div class="info-item"><span class="k">线索总数</span><span class="v">{{ clSummary().total }}</span></div>
+            <div class="info-item"><span class="k">高意向</span><span class="v" style="color:#FF2442">{{ clSummary().high }}</span></div>
+            <div class="info-item"><span class="k">留联系方式命中</span><span class="v" style="color:#00A86B">{{ clSummary().contact }}</span></div>
+            <div class="info-item"><span class="k">采集说明</span><span class="v small">高意向置顶，其余按互动足迹排序；「去私信」仅生成话术，发送由你确认</span></div>
+            <div style="margin-left:auto;display:flex;gap:8px">
+              <button class="btn sm primary" @click="exportClientsCsv">导出线索 CSV</button>
             </div>
-            <a v-if="c.profile" :href="c.profile" target="_blank" class="au-hot" @click.stop>主页 ↗</a>
           </div>
-          <div class="au-cmt">“{{ (c.sample_comment || '—').slice(0, 60) }}”</div>
-          <div class="au-foot">{{ c.created_at ? '采集于 ' + c.created_at.slice(0, 10) : '' }}</div>
-        </div>
+          <div style="display:flex;gap:6px;margin-bottom:10px">
+            <button class="cl-tab" :class="{ on: clTab === 'all' }" @click="setClTab('all')">全部 {{ clients.length }}</button>
+            <button class="cl-tab" :class="{ on: clTab === 'high' }" @click="setClTab('high')">高意向 {{ clSummary().high }}</button>
+            <button class="cl-tab" :class="{ on: clTab === '7d' }" @click="setClTab('7d')">近 7 天</button>
+          </div>
+          <div class="cl-list">
+            <div v-for="c in clients" :key="c.uid" class="cl-row">
+              <div class="cl-av au-ph">{{ (c.nickname || '客')[0] }}</div>
+              <div class="cl-main">
+                <div class="cl-top">
+                  <span class="cl-nick">{{ c.nickname || '未知用户' }}</span>
+                  <span class="cl-intent" :class="intentCls(c)">{{ intentLabel(c) }}</span>
+                  <span v-if="c.matched_word" class="cl-word">命中「{{ c.matched_word }}」</span>
+                  <span v-if="c.ip_location" class="cl-ip">📍 {{ c.ip_location }}</span>
+                  <span v-if="c.comment_time" class="cl-time">{{ c.comment_time }}</span>
+                  <a v-if="c.profile" :href="c.profile" target="_blank" class="cl-link" @click.stop>主页 ↗</a>
+                </div>
+                <div class="cl-cmt">“{{ (c.sample_comment || '—').slice(0, 90) }}”</div>
+                <div class="cl-foot">足迹 {{ c.comment_count }} 次 · 关联 {{ c.note_count }} 篇 · 采集于 {{ (c.created_at || '').slice(0, 10) }}</div>
+              </div>
+              <div class="cl-act">
+                <button class="btn sm" @click="goTalk(c)">去私信</button>
+              </div>
+            </div>
+          </div>
+        </template>
       </div>
 
       <!-- 笔记视图 -->
@@ -315,5 +407,105 @@ function openProfile(p: string | null) {
   border-radius: 8px;
   padding: 8px 10px;
   line-height: 1.5;
+}
+/* ===== O1-3 客户库：评论区线索列表 ===== */
+.cl-tab {
+  border: 1px solid var(--line, #ececec);
+  background: var(--bg-card, #fff);
+  color: var(--ink-2, #888);
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.cl-tab.on {
+  border-color: #e0b36b;
+  color: #b08a4d;
+  font-weight: 600;
+  background: #fff8ef;
+}
+.cl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cl-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--line, #ececec);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.cl-row:hover {
+  border-color: #e0b36b;
+}
+.cl-av {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  font-size: 16px;
+}
+.cl-main {
+  flex: 1;
+  min-width: 0;
+}
+.cl-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cl-nick {
+  font-weight: 600;
+  font-size: 14px;
+}
+.cl-intent {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
+  color: #fff;
+}
+.cl-intent.i-high { background: #FF2442; }
+.cl-intent.i-upper { background: #FF9D5C; }
+.cl-intent.i-mid { background: #F79009; }
+.cl-intent.i-low { background: #9AA5B1; }
+.cl-word {
+  font-size: 11px;
+  color: #b08a4d;
+  background: #fff8ef;
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+.cl-ip {
+  font-size: 11px;
+  color: var(--ink-2, #888);
+}
+.cl-time {
+  font-size: 11px;
+  color: var(--ink-2, #999);
+}
+.cl-link {
+  margin-left: auto;
+  font-size: 12px;
+  color: #b08a4d;
+  text-decoration: none;
+}
+.cl-cmt {
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--ink-2, #666);
+  line-height: 1.5;
+}
+.cl-foot {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--ink-2, #999);
+}
+.cl-act {
+  flex-shrink: 0;
 }
 </style>

@@ -69,9 +69,12 @@ export async function apiAuthors(): Promise<{ total: number; total_notes: number
   return j(await fetch(`${BASE}/api/authors`))
 }
 
-export async function apiClientsList(feedId = ''): Promise<{ total: number; clients: ClientUser[] }> {
-  const q = feedId ? `?feed_id=${encodeURIComponent(feedId)}` : ''
-  return j(await fetch(`${BASE}/api/clients_list${q}`))
+export async function apiClientsList(feedId = '', intent = ''): Promise<{ total: number; clients: ClientUser[] }> {
+  const p = new URLSearchParams()
+  if (feedId) p.set('feed_id', feedId)
+  if (intent) p.set('intent', intent)
+  const q = p.toString()
+  return j(await fetch(`${BASE}/api/clients_list${q ? `?${q}` : ''}`))
 }
 
 export async function apiClone(feedId: string): Promise<ClonePayload> {

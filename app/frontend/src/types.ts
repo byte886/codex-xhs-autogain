@@ -79,7 +79,7 @@ export interface Author {
   last_publish: number | null
 }
 
-/** 客户库（P4）：已采集的笔记互动用户，按互动足迹聚合 */
+/** 客户库（O1-3）：已采集的笔记互动用户，按互动足迹聚合 + 意向分级 */
 export interface ClientUser {
   uid: string
   nickname: string
@@ -88,6 +88,11 @@ export interface ClientUser {
   sample_comment: string
   profile: string
   created_at: string
+  /** O1-3 意向分级：high/upper/middle/low */
+  intent?: string
+  matched_word?: string
+  ip_location?: string
+  comment_time?: string
 }
 
 export interface ClonePayload {
