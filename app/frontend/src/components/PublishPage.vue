@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { appState, coverProxy, setStage, setTab, toast } from '../store'
-import { apiClone, apiPublish, apiSaveDraft, apiUploadImage, apiDrafts, apiDraftDelete, apiGetLLMConfig, apiAiGenerate } from '../api'
+import { apiClone, apiPublish, apiSaveDraft, apiUploadImage, apiDrafts, apiDraftDelete, apiGetLLMConfig, apiAiGenerate, apiLogs, apiPublishStats } from '../api'
 import type { DraftItem } from '../api'
-import type { Note } from '../types'
+import type { LogItem, Note } from '../types'
 
 const emit = defineEmits<{ (e: 'back'): void }>()
 
@@ -274,6 +274,45 @@ async function saveDraft() {
   }
 }
 
+// ---- P1 数据回流：发布记录 + 回写互动数据（浏览/赞/藏/评/转） ----
+const logs = ref<LogItem[]>([])
+const logBusy = ref(0)                          // 正在回写的记录 id
+const logUrlInput = ref<Record<string, string>>({})  // 每条记录的已发布链接输入（key=记录 id 字符串）
+
+async function loadLogs() {
+  try { logs.value = await apiLogs() } catch { logs.value = [] }
+}
+loadLogs()
+
+function loadLogsOnOpen(ev: Event) {
+  const el = ev.target as HTMLDetailsElement
+  if (el.open) loadLogs()
+}
+
+function parseStats(lg: LogItem): Record<string, string> | null {
+  const s = lg.stats_json
+  if (typeof s !== 'string' || !s) return null
+  try { return JSON.parse(s) } catch { return null }
+}
+
+async function writeback(lg: LogItem) {
+  const id = String(lg.id)
+  logBusy.value = Number(id)
+  try {
+    const r = await apiPublishStats(Number(id), logUrlInput.value[id] || '')
+    if (r.ok && r.stats) {
+      toast('已回写互动数据（可在发布记录中查看）')
+      await loadLogs()
+    } else {
+      toast(`回写失败：${(r as { detail?: string }).detail || (r as { note?: string }).note || '未知原因'}`)
+    }
+  } catch (e) {
+    toast(`回写失败：${(e as Error).message}`)
+  } finally {
+    logBusy.value = 0
+  }
+}
+
 // ---- O1 AI 文稿（Key 门控：未配置时按钮灰态 + 后端 400；配置入口收敛到「设置」Tab） ----
 const aiCfg = ref<{ configured: boolean; openai_base_url: string; default_model: string; llm_api_key_masked: string }>()
 const aiBusy = ref('')
@@ -457,6 +496,36 @@ async function aiRun(action: string) {
         </div>
       </div>
     </div>
+
+    <!-- 发布记录 + 数据回流（P1）：回写已发布笔记互动数据（展开时自动刷新） -->
+    <details class="pub-log-panel" style="margin:18px 26px 0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 18px"
+             @toggle="loadLogsOnOpen($event)">
+      <summary style="cursor:pointer;font-size:13px;color:var(--ink-2)">
+        发布记录（{{ logs.length }}）
+        <button v-if="!logs.length" class="mini-btn" @click.prevent="loadLogs" style="margin-left:8px">刷新</button>
+      </summary>
+      <div v-if="!logs.length" class="dim" style="padding:8px 0;font-size:12px">暂无发布记录。发布后在此显示，可回写浏览/赞/藏/评/转数据。</div>
+      <div v-for="lg in logs" :key="String(lg.id)" class="pub-log-item" style="border-top:1px dashed var(--line);padding:8px 0;margin-top:6px">
+        <div style="display:flex;gap:10px;align-items:center;font-size:12px">
+          <span style="font-weight:600">{{ String(lg.title || '(无标题)').slice(0, 24) }}</span>
+          <span class="dim">{{ String(lg.created_at || '').replace('T', ' ') }}</span>
+          <span :style="{ color: lg.status === 'success' ? 'var(--green, #16a34a)' : '#b45309' }">{{ lg.status === 'success' ? '已发布' : '待手动发布' }}</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <input v-model="logUrlInput[lg.id as number]" placeholder="粘贴已发布笔记链接（可选，建议填）"
+                 style="flex:1;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font-size:12px;color:var(--ink-1)" />
+          <button :disabled="logBusy === lg.id" @click="writeback(lg)"
+                  style="border:1px solid var(--line);border-radius:6px;padding:5px 12px;font-size:12px;background:var(--bg);color:var(--ink-1);cursor:pointer">
+            {{ logBusy === lg.id ? '回写中…' : '回写数据' }}
+          </button>
+        </div>
+        <div v-if="parseStats(lg)" class="dim" style="font-size:12px;margin-top:4px">
+          浏览 {{ parseStats(lg)?.views || '-' }} · 赞 {{ parseStats(lg)?.liked_count || '-' }} ·
+          藏 {{ parseStats(lg)?.collected_count || '-' }} · 评 {{ parseStats(lg)?.comment_count || '-' }} ·
+          转 {{ parseStats(lg)?.shared_count || '-' }} · 抓于 {{ (parseStats(lg)?.fetched_at || '').replace('T', ' ') }}
+        </div>
+      </div>
+    </details>
 
     <!-- 图片全图预览（lightbox：点击遮罩/图关闭） -->
     <div v-if="previewUrl" class="img-lightbox" @click="previewUrl = ''">

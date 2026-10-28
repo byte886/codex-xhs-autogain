@@ -839,6 +839,15 @@ async def note(note_id: str, xsec_token: str = "", wait_ms: int = 5000) -> dict:
         await _close_page_safe(page)
 
 
+async def note_url(url: str, wait_ms: int = 5000) -> dict:
+    """按完整链接打开笔记页并提取详情（数据回流用：用户发布后的笔记链接）。"""
+    page = await _load(url, wait_ms)
+    try:
+        return await page.evaluate("() => xhsExtractNoteDetail()")
+    finally:
+        await _close_page_safe(page)
+
+
 async def user(uid: str, wait_ms: int = 5000) -> dict:
     page = await _load(f"{_XHS}/user/profile/{uid}", wait_ms)
     try:

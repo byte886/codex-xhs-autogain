@@ -106,6 +106,17 @@ function xhsExtractNoteDetail(root = document) {
       authorNick = (cur.user && cur.user.nickname) || '';
     }
   } catch (e) { /* 拿不到就走空值 */ }
+  // 浏览量：详情页头部 "xx次浏览"（DOM 文本；SSR interactInfo 无 views 字段）
+  let views = '';
+  try {
+    const vEl = root.querySelector('[class*="view-count"], [class*="views"], [class*="viewCount"]');
+    if (vEl) views = vEl.innerText.trim();
+    if (!views) {
+      const bodyText = (root.body ? root.body.innerText : '');
+      const m = bodyText.match(/([\d.]+[万千wW]?)\s*次浏览/);
+      if (m) views = m[1];
+    }
+  } catch (e) { /* 空值 */ }
   return {
     title,
     desc: descEl ? descEl.innerText.trim() : '',
@@ -120,6 +131,7 @@ function xhsExtractNoteDetail(root = document) {
     collected_count: interact && interact.collectedCount != null ? String(interact.collectedCount) : '',
     comment_count: interact && interact.commentCount != null ? String(interact.commentCount) : '',
     shared_count: interact && interact.shareCount != null ? String(interact.shareCount) : '',
+    views,
     publish_time_ms: pubTimeMs,
   };
 }

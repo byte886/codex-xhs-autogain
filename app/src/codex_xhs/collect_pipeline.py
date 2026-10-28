@@ -114,6 +114,18 @@ async def get_feed_detail(note: dict) -> dict:
     return note
 
 
+async def get_note_detail_by_url(url: str) -> dict:
+    """数据回流：按完整笔记链接抓取详情（已发布笔记）。返回提取原始 dict，未 merge。"""
+    from codex_xhs import browser_client
+
+    try:
+        d = await browser_client.note_url(url)
+    except Exception:  # noqa: BLE001
+        return {}
+    time.sleep(REQUEST_INTERVAL[0] + random.random() * (REQUEST_INTERVAL[1] - REQUEST_INTERVAL[0]))
+    return d or {}
+
+
 def _merge_detail_core(note: dict, d: dict) -> None:
     """标题/正文/类型 + 无标题兜底 + 作者 uid/昵称 + 详情图片。"""
     if d.get("title"):
@@ -139,7 +151,7 @@ def _merge_detail_core(note: dict, d: dict) -> None:
 
 def _merge_detail_interactions(note: dict, d: dict) -> None:
     """互动数据补全（SSR 来源，详情页比搜索卡片更全更准）+ 发布时间转换。"""
-    for k in ("liked_count", "collected_count", "comment_count", "shared_count"):
+    for k in ("liked_count", "collected_count", "comment_count", "shared_count", "views"):
         if d.get(k):
             note[k] = d[k]
     # 发布时间：SSR time 为毫秒时间戳 → 秒级；DOM 日期（如 09-22）无年份不做时间戳

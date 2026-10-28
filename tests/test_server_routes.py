@@ -378,6 +378,54 @@ class TestClone:
         assert "视频" in r.json()["detail"]
 
 
+class TestPublishStats:
+    """P1 数据回流：发布记录回写互动数据（浏览/赞/藏/评/转）。"""
+
+    @staticmethod
+    def _seed_log(tmp_path, feed_id="a1"):
+        _seed_notes(tmp_path)
+        con = sqlite3.connect(tmp_path / "test.db")
+        con.execute(
+            "INSERT INTO publish_logs (feed_id, title, content, tags, visibility, status, created_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (feed_id, "标题", "正文", "", "公开可见", "success", "2026-10-28T12:00:00"),
+        )
+        con.commit()
+        con.close()
+
+    def test_stats_by_source_feed(self, client, monkeypatch, tmp_path):
+        self._seed_log(tmp_path, "a1")
+
+        async def fake_detail(note):
+            note.update({"views": "1234", "liked_count": "100", "collected_count": "20",
+                         "comment_count": "5", "shared_count": "2"})
+            return note
+
+        monkeypatch.setattr(server, "get_feed_detail", fake_detail)
+        r = client.post("/api/publish_stats", json={"log_id": 1})
+        j = r.json()
+        assert r.status_code == 200 and j["ok"] is True and j["stats"]["views"] == "1234"
+        con = sqlite3.connect(tmp_path / "test.db")
+        row = con.execute("SELECT stats_json FROM publish_logs WHERE id=1").fetchone()
+        con.close()
+        assert json.loads(row[0])["liked_count"] == "100"
+
+    def test_stats_by_url(self, client, monkeypatch, tmp_path):
+        self._seed_log(tmp_path, "")
+
+        async def fake_url(url):
+            return {"views": "999", "liked_count": "50", "collected_count": "",
+                    "comment_count": "", "shared_count": ""}
+
+        monkeypatch.setattr(server, "get_note_detail_by_url", fake_url)
+        r = client.post("/api/publish_stats", json={"log_id": 1, "note_url": "https://www.xiaohongshu.com/explore/abc"})
+        assert r.status_code == 200 and r.json()["ok"] is True and r.json()["stats"]["views"] == "999"
+
+    def test_stats_404(self, client):
+        r = client.post("/api/publish_stats", json={"log_id": 999})
+        assert r.status_code == 404
+
+
 class TestCollectClients:
     def test_clients_ok(self, client, monkeypatch, tmp_path):
         _seed_notes(tmp_path)

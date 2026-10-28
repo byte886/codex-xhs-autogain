@@ -124,7 +124,16 @@ export async function apiSaveDraft(payload: {
 }
 
 export async function apiLogs(): Promise<LogItem[]> {
-  return j(await fetch(`${BASE}/api/logs`))
+  const d = await j<{ logs: LogItem[] }>(await fetch(`${BASE}/api/logs`))
+  return d.logs || []
+}
+
+export async function apiPublishStats(logId: number, noteUrl: string): Promise<{ ok: boolean; stats?: Record<string, string>; note?: string }> {
+  return j(await fetch(`${BASE}/api/publish_stats`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ log_id: logId, note_url: noteUrl })
+  }))
 }
 
 export async function apiImportCookie(): Promise<{ ok: boolean; count?: number; account?: string; error?: string }> {

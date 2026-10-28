@@ -43,6 +43,7 @@ _INTERVAL = (1.0, 1.8)
 from codex_xhs.score import rank_notes, _to_int  # noqa: E402
 from codex_xhs.collect_pipeline import (  # noqa: E402
     get_feed_detail,
+    get_note_detail_by_url,
     get_user_profile,
     search_via_browser,
 )
@@ -125,6 +126,11 @@ def _init_tables(con):
     # v3 拟人化护栏需要 raw 列（风控熔断关键词检测）；老库补列
     try:
         con.execute("ALTER TABLE publish_logs ADD COLUMN raw TEXT")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
+    # P1 数据回流：发布记录回写互动数据（浏览/赞/藏/评/转 + 抓取时间）
+    try:
+        con.execute("ALTER TABLE publish_logs ADD COLUMN stats_json TEXT")
     except sqlite3.OperationalError:
         pass  # 列已存在
     # P4 采集客户：互动用户名单（评论用户）
@@ -1744,6 +1750,49 @@ def logs():
     con = _db()
     rows = con.execute("SELECT * FROM publish_logs ORDER BY id DESC LIMIT 50").fetchall()
     return {"logs": [dict(r) for r in rows]}
+
+
+class PublishStatsReq(BaseModel):
+    log_id: int
+    note_url: str = ""
+
+
+@app.post("/api/publish_stats")
+async def publish_stats(req: PublishStatsReq):
+    """数据回流：本地浏览器打开已发布笔记详情页，抓取互动数据（浏览/赞/藏/评/转）回写发布记录。
+
+    优先用用户提供的发布后笔记链接（手动发布后新笔记有新的 feed_id）；
+    未提供时回退按记录里的来源 feed_id 抓取。
+    """
+    await _require_login()
+    con = _db()
+    row = con.execute("SELECT * FROM publish_logs WHERE id=?", (req.log_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "发布记录不存在")
+    url = (req.note_url or "").strip()
+    if url:
+        d = await get_note_detail_by_url(url)
+        if not d:
+            raise HTTPException(400, "打开笔记失败：链接无效或需登录（请确认 Chrome 已登录小红书，且链接是公开笔记）")
+    else:
+        feed_id = row["feed_id"] or ""
+        if not feed_id:
+            raise HTTPException(400, "该记录无来源笔记 ID，请粘贴已发布笔记链接后重试")
+        # 搜索来源笔记带 xsec_token 才能打开详情页（explore 直开会 404/风控）
+        tok = ""
+        row2 = con.execute("SELECT xsec_token FROM notes WHERE feed_id=?", (feed_id,)).fetchone()
+        if row2 and row2[0]:
+            tok = row2[0]
+        note = {"feed_id": feed_id, "xsec_token": tok}
+        d = await get_feed_detail(note)
+    stats = {k: d.get(k) or "" for k in ("views", "liked_count", "collected_count", "comment_count", "shared_count")}
+    if not any(v for v in stats.values()):
+        raise HTTPException(400, "未抓到互动数据：请确认 Chrome 已登录小红书且笔记可正常访问（笔记可能已删除/被风控）")
+    stats["fetched_at"] = _now().isoformat(timespec="seconds")
+    con.execute("UPDATE publish_logs SET stats_json=? WHERE id=?",
+                (json.dumps(stats, ensure_ascii=False), req.log_id))
+    con.commit()
+    return {"ok": True, "stats": stats}
 
 
 # ================= 图片代理（容器内路径 → 浏览器可读） =================
