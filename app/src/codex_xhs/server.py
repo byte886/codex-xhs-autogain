@@ -1010,22 +1010,43 @@ class DownloadImgsReq(BaseModel):
 
 @app.post("/api/download_images")
 def download_images(req: DownloadImgsReq):
-    """打包选中笔记的本地封面图为 zip。
+    """打包选中笔记的本地图片为 zip。
 
-    图片已在本地磁盘（data/images），直接读文件打包，无网络请求、无风控风险。
-    缺失的 feed_id 在响应头 X-Missing 中返回（前端据此提示）。
+    优先打包本地缓存（克隆时下载的 fid_pN.jpg / fid_cover.jpg 全部命中）；
+    本地无缓存时回退远程 cover_url 补下载（带 Referer，低频，仅用户主动点打包时触发）；
+    仍缺失的 feed_id 在响应头 X-Missing 中返回（前端据此提示）。
     """
     if not req.feed_ids:
         raise HTTPException(400, "没有选中的笔记")
     missing: list[str] = []
+    con = _db()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for fid in req.feed_ids:
-            p = IMAGES_DIR / _img_name(fid)
-            if p.exists():
-                zf.write(p, arcname=p.name)
-            else:
-                missing.append(fid)
+            prefix = fid.replace("#", "_")
+            files = sorted(IMAGES_DIR.glob(f"{prefix}_*.jpg")) if IMAGES_DIR.exists() else []
+            if files:
+                for f in files:
+                    zf.write(f, arcname=f.name)
+                continue
+            # 本地无缓存：回退远程 cover_url 补下载（与克隆下载同策略）
+            row = con.execute("SELECT cover_url FROM notes WHERE feed_id = ?", (fid,)).fetchone()
+            url = (row["cover_url"] if row else "") or ""
+            if url:
+                try:
+                    reqh = urllib.request.Request(
+                        url,
+                        headers={"Referer": "https://www.xiaohongshu.com/", "User-Agent": "Mozilla/5.0"},
+                    )
+                    data = urllib.request.urlopen(reqh, timeout=20).read()
+                    if len(data) > 4096:  # 过滤装饰性小图
+                        fname = _img_name(fid, suffix="cover")
+                        (IMAGES_DIR / fname).write_bytes(data)
+                        zf.write(IMAGES_DIR / fname, arcname=fname)
+                        continue
+                except Exception:  # noqa: BLE001
+                    pass
+            missing.append(fid)
     data = buf.getvalue()
     fname = f"xhs_images_{int(time.time() * 1000)}.zip"
     headers = {"Content-Disposition": f"attachment; filename={fname}"}
