@@ -1,18 +1,18 @@
 # codex-zhuke 全项目 Clean Code 质检报告（2026-10-28 凌晨）
 
 > 范围：后端（app/src/codex_xhs/*）+ 前端（app/frontend/src/*）+ 生产脚本（app/scripts/*）+ 浏览器提取（extension/lib/extract.js）+ 测试（tests/*）。
-> 方式：本轮为**可执行检查项**（pytest / import-linter / radon / 构建 / 语法），结合 Clean Code Gauntlet 六维度门（CRAP / 变异 / 覆盖率 / 架构 / DRY）。gauntlet 的 crapper / mutator 在本机因工具链环境（tree-sitter 语法包未生效）无法产出，改用等价轻量工具补齐。
+> 方式：本轮为**可执行检查项**（pytest / import-linter / radon / 构建 / 语法 / crapper），结合 Clean Code Gauntlet 六维度门（CRAP / 变异 / 覆盖率 / 架构 / DRY）。**gauntlet 工具链已修通**（crapper 可产出 CRAP 报告；此前"卡死"根因 = crapper 内部跑 pytest 撞上收尾挂起，随挂起根治一并解决；tree-sitter 语法包确认已装齐）。
 
 ## 一、六维度结果
 
 | 维度 | 工具 | 结果 | 说明 |
 |---|---|---|---|
-| 测试（全量） | pytest | ✅ 8 文件全绿 EXIT=0 | score 38 / cookie_reader 15+23 / browser_client 7 / collect_pipeline 6 / server / server_routes 60 / server_api 10 |
+| 测试（全量） | pytest | ✅ 9 文件全绿 EXIT=0 | score 38 / cookie_reader 15+23 / browser_client 7 / collect_pipeline 6 / server / server_routes 60 / server_api 10 / **server_cdp 29（新增）**，共 173 |
 | 架构约束 | import-linter | ✅ 2/2 contracts kept, 0 broken | leaf 纯净（score/cookie_reader）；server 顶层（无环） |
-| 圈复杂度 | radon | ⚠️ 5 处超标（阈值 ≤8） | 见下方清单 |
-| 覆盖率 | pytest --cov | ❌ 全量跑挂起（37% 处） | coverage × asyncio 后台任务组合疑似死锁，待专项排查 |
-| CRAP / 变异 | crapper / mutator | ⛔ 工具链不可用 | crapper 卡死 30s+ 无输出；疑 tree-sitter 语法包缺失（install 后需 patch-treesitter.sh，本机未生效） |
-| DRY | dryer | ⛔ 同工具链不可用 | — |
+| 圈复杂度 | radon | ✅ 已清零（阈值 ≤8） | 见下方清单；无任何 >8 函数 |
+| 覆盖率 | pytest --cov | ✅ 85%（≥80 门达标） | cookie_reader 93% / score 95% / server 72%→**83%**（新增 CDP 配置层测试）；browser_client / collect_pipeline 按 `.coveragerc` 设计豁免（人工冒烟口径） |
+| CRAP / 变异 | crapper / mutator | ⚠️ 部分可用 | crapper 已可产出 `.metrics/crap.edn`（coverage 挂载待修：lcov 读入后 Cov=0，CRAP 数值暂不可信）；mutator / dryer 状态待复核 |
+| DRY | dryer | ⚠️ 待复核 | `.metrics/dry.edn` 仅 17B（疑空结果） |
 | 前端构建 | npm run build | ✅ 通过 | 产出 ../web/assets/index-CnNw2ilS.js / CRKb7nSt.css |
 | 脚本语法 | node --check | ✅ extract.js 通过 | 生产链路注入源 |
 
@@ -35,11 +35,12 @@
 
 - **test_server_routes.py collect 测试挂起**：collect_start worker 新增 `_enrich_notes`（真实浏览器详情补全）步骤后，测试未同步 mock → TestClient 内真实调用浏览器导致全量 pytest 挂起。已补 `fake_enrich` monkeypatch（commit `07b11c9`）。
 - 附带发现：**多个 pytest 进程并发会互相抢 DB/资源**，串行分文件执行稳定。
+- **【根治】全量 pytest 收尾挂起（根因闭环）**：`@app.on_event("startup")` 注册的是**原始函数对象**，测试里 `monkeypatch.setattr(server, "_startup_cleanup", ...)` 只改模块属性、对 FastAPI 事件表无效 → TestClient 每次启动仍真实执行 `browser_client.cleanup_tabs()`（连接 9223 + 启动 playwright driver 子进程），全量运行时多个 driver 子进程/线程泄漏 → pytest 退出收尾挂起（采样铁证：主线程等锁 + `os.waitpid` 等子进程 + kqueue loop）。**根治 = `tests/conftest.py` 全局 autouse fixture `_no_real_browser` 把 `browser_client.cleanup_tabs` patch 为 noop**。验证：全量 173 测试 `[100%]` EXIT=0，耗时正常。
+- **覆盖率真相**：browser_client / collect_pipeline 不在报告是 `.coveragerc` 的**设计豁免**（注释写明"集成层按人工冒烟口径豁免"），非测量故障。真实口径 TOTAL 85%（server 72%→83% 因新增 tests/test_server_cdp.py CDP 配置层 29 个测试）。
 
 ## 四、遗留待办（需用户决策/专项）
 
-1. **全量 pytest 收尾偶发挂起（已定位，非测试失败）**：专项排查证实 **144 个测试全部执行且通过**（进度点打满、无 FAILED），挂起发生在 pytest 退出收尾阶段——TestClient 的 asyncio loop/后台 task 跨文件累积，属测试基建问题而非产品代码缺陷。分文件/分组执行全部稳定（score+cookie×2 / +browser_client / +collect_pipeline / +server / +routes / +api 均 DONE）。已加 **pytest-timeout（`timeout = 60`）硬超时防护**（单测级）；收尾挂起不影响 CI 结果判断（测试全过），彻底根治需将 TestClient 收尾抽象为共享 fixture（留待专项）。
-2. **覆盖率（`pytest --cov`）**：分文件 `--cov` 均可正常完成（fail-under=80 触发小范围 no-data-collected 属配置行为）；全量 `--cov` 的"挂起"与上述收尾挂起同源（测试已全过）。
-3. **gauntlet 工具链**：crapper/mutator/dryer 需 tree-sitter 语法包（patch-treesitter.sh）或工具链重装；否则 CRAP/变异/DRY 三维度无法机器执行（可用 radon + 人工评审替代）。
-4. **复杂度重构**：见上清单，待平台恢复后与实机验证一并做。
-5. **平台限流**：10-28 清晨两次低频探测（05:13 / 上午）均 180s 超时且 Chrome 出现 `website-login/captcha` tab（"请求太频繁"），已按原则清理残留 tab、未连环重试——**仍限流中**；待恢复后跑真实链路（采集→评分→作者榜→克隆验证提取增强→客户库→草稿）。
+1. ~~全量 pytest 收尾挂起~~ **✅ 已根治**（见上节，conftest 全局 autouse patch + pytest-timeout 双保险）。
+2. ~~覆盖率挂起/未达标~~ **✅ 已达标**：真实口径 85% ≥ 80% 门（server 83%）；browser_client / collect_pipeline 按 `.coveragerc` 设计豁免（集成层人工冒烟口径）。
+3. **gauntlet CRAP 数值落地**：crapper 已修通并产出 `.metrics/crap.edn`（最差 `chrome_executable` CRAP 110），但 lcov 读入后各函数 Cov=0（疑似 crapper 的 lcov 路径匹配或 omit 影响）——CRAP 数值暂不可信，可选项：修 crapper lcov 挂载，或以"radon CC≤8 + 真实覆盖率 85% + 人工评审"替代口径收尾；mutator / dryer 状态待复核（`.metrics/mutate/` 有 22 项产物，10-27 生成）。
+4. **平台限流**：10-28 清晨两次低频探测（05:13 / 上午）均 180s 超时且 Chrome 出现 `website-login/captcha` tab（"请求太频繁"），已按原则清理残留 tab、未连环重试——**仍限流中**；待恢复后跑真实链路（采集→评分→作者榜→克隆验证提取增强→客户库→草稿），发布永远手动。
