@@ -67,7 +67,30 @@ input:focus,select:focus,textarea:focus{outline:2px solid rgba(255,36,66,.2);bor
 .note-card .cover{aspect-ratio:3/4;position:relative;background:linear-gradient(135deg,#FFE9EC,#FFF7D6)}
 .note-card .cover .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#E8B0BC;font-size:30px}
 .note-card .cover .badge-type{position:absolute;top:8px;left:8px;font-size:10px;background:rgba(0,0,0,.55);color:#fff;border-radius:4px;padding:2px 6px}
-.note-card .cover .score{position:absolute;top:8px;right:8px;font-size:11px;font-weight:700;background:rgba(0,0,0,.65);color:#FFD24D;border-radius:6px;padding:2px 7px}
+/* ===== 评分维度 tooltip ===== */
+.score{position:absolute;top:8px;right:8px;font-size:11px;font-weight:700;background:rgba(0,0,0,.65);color:#FFD24D;border-radius:6px;padding:2px 7px;cursor:default}
+.score .dims{display:none;position:absolute;top:26px;right:0;width:200px;background:#fff;color:var(--ink);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);padding:10px 12px;font-size:11px;font-weight:400;line-height:1.7;z-index:20}
+.score .dims b{color:var(--red);font-weight:700}
+.score:hover .dims{display:block}
+.score .dims .dim{display:flex;justify-content:space-between;gap:8px}
+.score .dims .dim i{font-style:normal;color:var(--ink-2)}
+.sel-mini{border:1px solid var(--line);border-radius:6px;padding:2px 6px;font-size:11px;color:var(--ink);background:#fff}
+/* ===== 克隆 AI 工具视图 ===== */
+.clone-wrap{display:grid;grid-template-columns:220px 1fr 240px;gap:14px;align-items:start}
+.clone-panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+.clone-panel h4{margin:0 0 8px;font-size:12px;color:var(--ink-2);font-weight:600}
+.ai-bar{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.ai-bar button{border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:12px;background:#fff;cursor:pointer;color:var(--ink)}
+.ai-bar button:disabled{background:#F5F6F7;color:#B8BEC6;cursor:not-allowed}
+.ai-out{background:#FFF8F0;border:1px dashed var(--orange,#FF9D5C);border-radius:8px;padding:10px 12px;font-size:12px;color:#7A5A2E;line-height:1.7;margin-top:8px}
+.key-tip{font-size:11px;color:var(--ink-2);background:var(--bg);border-radius:6px;padding:6px 10px;display:inline-block;margin-top:6px}
+/* ===== CDP 配置视图 ===== */
+.cdp-card{max-width:640px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+.cdp-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px dashed var(--line)}
+.cdp-row .k{width:96px;font-size:12px;color:var(--ink-2)}
+.cdp-row input[type=text]{flex:1;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12px}
+.cdp-status{font-size:11px;margin-top:10px;line-height:1.8}
+.ok{color:#00A86B}.warn{color:#F79009}
 .note-card .hover-bar{position:absolute;left:0;right:0;bottom:0;display:flex;gap:6px;padding:8px;background:linear-gradient(transparent,rgba(0,0,0,.55));opacity:0;transition:opacity .15s;justify-content:center}
 .note-card:hover .hover-bar{opacity:1}
 .hover-bar .hbtn{font-size:12px;font-weight:600;padding:6px 12px;border-radius:6px;background:#fff;color:var(--ink)}
@@ -187,8 +210,10 @@ tr:hover td{background:#FAFAFA}
     <div class="page-desc">先按关键词采集笔记（评分排序），再对单篇笔记采集评论用户。悬停卡片 → 「采集客户」→ 打开评论区线索。评论区结果同时回填「评论信号」，辅助判断爆文模板是否击中目标用户。</div>
     <div class="info-bar">
       <div class="info-item"><span class="k">关键词</span><span class="v small">翡翠 · 玉镯 · 手串</span></div>
+      <div class="info-item"><span class="k">排序</span><span class="v small"><select class="sel-mini" onchange="void 0"><option>综合（默认）</option><option>最新</option><option>最热</option><option>最多评论</option><option>最多收藏</option></select></span></div>
+      <div class="info-item"><span class="k">类型</span><span class="v small"><select class="sel-mini"><option>全部</option><option>图文</option><option>视频</option></select></span></div>
+      <div class="info-item"><span class="k">时间</span><span class="v small"><select class="sel-mini"><option>不限</option><option>近 1 天</option><option>近 1 周</option><option>近 1 月</option></select></span></div>
       <div class="info-item"><span class="k">已采集</span><span class="v">12 篇</span></div>
-      <div class="info-item"><span class="k">采集上限</span><span class="v small">单次 ≤ 6 页 / 120 条</span></div>
       <div class="info-item"><span class="k">上次任务</span><span class="v small"><span class="status-pill done">完成</span></span></div>
       <div class="batch" style="margin-left:auto">
         <button class="btn sm">导线索 CSV</button>
@@ -319,6 +344,44 @@ tr:hover td{background:#FAFAFA}
     </div>
   </section>
 
+  <!-- ===== 视图：克隆 AI 工具（F2 对齐，Key 门控） ===== -->
+  <section class="view" id="view-clone">
+    <div class="page-title">克隆 AI 工具 · 原笔记载荷 + AI 文稿门控</div>
+    <div class="page-desc">克隆卡片进入编辑页：左=原笔记参考，中=创作区（结果可继续编辑），右=AI 工具条。未配置 Key 时 AI 按钮灰态并提示「前往 AI 设置配置模型」；生成结果进编辑区后再走手动发布/存草稿。</div>
+    <div class="clone-wrap">
+      <div class="clone-panel"><h4>原笔记参考</h4><div style="font-size:12px;color:var(--ink-2);line-height:1.8">翡翠手镯怎么选？避坑 3 要点（原 2.5k 赞）<br><br>封面/正文结构：<br>· 痛点开场「买到假货才后悔」<br>· 3 条干货分点<br>· 结尾引导评论「你踩过坑吗」</div></div>
+      <div class="clone-panel">
+        <h4>创作区（结果可编辑）</h4>
+        <div style="font-size:12px;border:1px solid var(--line);border-radius:8px;padding:10px;min-height:120px;color:var(--ink-2)">标题 / 正文编辑区 —— AI 生成结果落在这里，可继续人工修改，再走现有发布（发布永远手动）</div>
+        <div class="key-tip">⚠ 未配置 AI 模型：AI 按钮灰态。前往「AI 设置」配置 Key 后解锁。</div>
+      </div>
+      <div class="clone-panel">
+        <h4>AI 工具条</h4>
+        <div class="ai-bar">
+          <button disabled>AI 总结标题</button>
+          <button disabled>AI 改写标题</button>
+          <button disabled>AI 创作正文</button>
+          <button disabled>AI 改写正文</button>
+          <button disabled>AI 提取标签</button>
+        </div>
+        <div class="ai-out" style="display:block">🔒 已配置 Key 后可用：<br>· 标题 ≤20 字，保留爆款方向<br>· 正文 800-1200 字 + emoji + 3-5 标签<br>· 结果全部可编辑</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 视图：CDP 配置（F8，生产自助） ===== -->
+  <section class="view" id="view-cdp">
+    <div class="page-title">CDP 配置 · Chrome 路径 / Profile 引导</div>
+    <div class="page-desc">生产环境（无 AI 窗口、只有 APP）用户自助配置 CDP。未配置时采集/克隆按钮灰态并引导；配置完成状态实时展示。默认按常见路径自动检测，失败弹文件对话框指定。</div>
+    <div class="cdp-card">
+      <div class="cdp-row"><span class="k">Chrome 路径</span><input type="text" value="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"><button class="btn sm">自动检测</button><button class="btn sm">浏览指定</button></div>
+      <div class="cdp-row"><span class="k">Profile</span><input type="text" value="Default（已登录小红书）" placeholder="如 Default / Profile 1"><button class="btn sm">检测</button></div>
+      <div class="cdp-row"><span class="k">调试端口</span><input type="text" value="9223（独立 Profile ~/.codex-xhs-profile）" disabled></div>
+      <div class="cdp-status"><span class="ok">✓ Chrome 已检测到 · Profile 已登录小红书 · 调试可用</span><br><span>生产脚本：macOS / Windows 双脚本带参数启动 Chrome 打开配置页（Python 参数化），未找到 Chrome 时 APP 提示并提供链接，配置好后按钮才可用。</span></div>
+      <div style="margin-top:12px;display:flex;gap:8px"><button class="btn primary">保存并验证</button><button class="btn">引导教程</button></div>
+    </div>
+  </section>
+
 </div>
 <script>
 /* ===== 示例数据 ===== */
@@ -362,7 +425,9 @@ const VIEWS=[
  {id:"client",n:2,name:"采集客户",desc:"评论区线索 + 意向分级"},
  {id:"agg",n:3,name:"数据聚合",desc:"线索 / 意向 / 属地 / 产出"},
  {id:"talk",n:4,name:"私信话术",desc:"模板 + AI 个性化（门控）"},
- {id:"set",n:5,name:"AI 设置",desc:"Key / BaseURL / 模型门控"},
+ {id:"clone",n:5,name:"克隆 AI 工具",desc:"原笔记载荷 + AI 文稿门控"},
+ {id:"set",n:6,name:"AI 设置",desc:"Key / BaseURL / 模型门控"},
+ {id:"cdp",n:7,name:"CDP 配置",desc:"Chrome 路径 / Profile 引导"},
 ];
 function renderFlow(cur){
   const bar=document.getElementById("flowBar");bar.innerHTML="";
@@ -386,7 +451,13 @@ function renderNotes(){
   NOTES.forEach((n,i)=>{
     const c=document.createElement("div");c.className="note-card";
     c.innerHTML=`<div class="cover">
-      <div class="ph">🖼</div><span class="badge-type">${n.type}</span><span class="score">${n.score}</span>
+      <div class="ph">🖼</div><span class="badge-type">${n.type}</span><span class="score">${n.score}
+        <span class="dims"><b>评分组成（CES 公式+综合）</b>
+          <span class="dim"><span>互动得分（赞藏评转）</span><i>${Math.round(n.score*.6)}</i></span>
+          <span class="dim"><span>爆文率（低粉高互动）</span><i>${Math.round(n.score*.25)}</i></span>
+          <span class="dim"><span>新鲜度（近7天）</span><i>${Math.round(n.score*.1)}</i></span>
+          <span class="dim"><span>评论信号质量</span><i>${Math.round(n.score*.05)}</i></span>
+        </span></span>
       <div class="hover-bar">
         <button class="hbtn cust" onclick="collectClient(${i})">采集客户</button>
         <button class="hbtn">克隆</button>
