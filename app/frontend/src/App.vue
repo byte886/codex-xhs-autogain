@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue'
-import { appState, setStage, toast } from './store'
+import { appState, setStage, setTab, toast } from './store'
 import type { Note } from './types'
 import FlowBar from './components/FlowBar.vue'
 import CollectPanel from './components/CollectPanel.vue'
 import WorkArea from './components/WorkArea.vue'
 import CardMenu from './components/CardMenu.vue'
 import PublishPage from './components/PublishPage.vue'
+import ClientsPanel from './components/ClientsPanel.vue'
+import SettingsPanel from './components/SettingsPanel.vue'
 import LoginModal from './components/LoginModal.vue'
 import { apiLoginStatus, apiRefreshCookieFromChrome, apiCleanupImages, apiNotes } from './api'
 
+// v1.5 工作流 4-Tab：采集 / 创作 / 客户 / 设置（创作、客户、设置用 v-show 保持状态）
 const publishRef = ref<InstanceType<typeof PublishPage> | null>(null)
+const clientsRef = ref<InstanceType<typeof ClientsPanel> | null>(null)
 
 const menuNote = ref<Note | null>(null)
 const menuPos = ref({ x: 0, y: 0 })
@@ -37,8 +41,8 @@ function closeMenu() {
 
 async function openPublish(note: Note) {
   menuNote.value = null
-  appState.publishOpen = true
-  // v-if 渲染 PublishPage 是异步的，必须等 DOM 挂载后才能拿到 ref
+  setTab('create')
+  // PublishPage 为 v-show 常驻，v-if 挂载只在首次；确保 openFor 目标为最新笔记
   await nextTick()
   await publishRef.value?.openFor(note)
 }
@@ -49,12 +53,10 @@ async function cloneOne(note: Note) {
     toast('视频笔记暂不支持一键克隆（视频克隆待办中）')
     return
   }
-  appState.publishOpen = true
-  await nextTick()
-  await publishRef.value?.openFor(note)
+  await openPublish(note)
 }
 
-// 采集客户（P4）：真实浏览器抓取笔记评论区互动用户，入库去重；图文+视频均可
+// 采集客户（P4/O1-3）：真实浏览器抓取笔记评论区互动用户，入库去重；完成后切客户 Tab 并刷新
 async function collectClients(note: Note) {
   const t = (note.title || '该笔记').slice(0, 12)
   toast(`正在采集「${t}…」的互动用户…`)
@@ -80,13 +82,14 @@ async function collectClients(note: Note) {
     toast(data.total > 0
       ? `采集到 ${data.total} 位互动用户（新增 ${data.new}）${hi}，已入库`
       : '未采集到互动用户（可能无评论或需登录）')
+    if (data.total > 0) {
+      setTab('clients')
+      await nextTick()
+      await clientsRef.value?.refresh()
+    }
   } catch {
     toast('采集失败：网络错误')
   }
-}
-
-function backFromPublish() {
-  appState.publishOpen = false
 }
 
 function fmtTime(s: number) {
@@ -119,7 +122,6 @@ onMounted(async () => {
     } catch { /* 后台读取失败：弹窗引导保持 */ }
   }
   // 搜索结果用完即失效：启动时不加载历史 notes（每次进入保持空白，仅当次采集后展示）
-  // （此前会自动加载上次结果并跳转筛选阶段，与「重新进入应为白屏」的规则冲突，已移除）
   // 启动时清理无引用本地图片（与后端 startup 双保险，防旧图堆积；fire-and-forget 不阻塞）
   apiCleanupImages().catch(() => {})
   // 显式 ?stage=pick 调试入口：不改变默认白屏规则，仅当 URL 显式带参时进入列表视图（UI 自动化/演示用）
@@ -135,6 +137,7 @@ onMounted(async () => {
       }
     } catch { /* 列表加载失败：仍进入 pick 空态 */ }
     setStage('pick')
+    setTab('collect')
   }
 })
 </script>
@@ -143,18 +146,32 @@ onMounted(async () => {
   <div>
     <FlowBar />
 
-    <template v-if="!appState.publishOpen">
-      <div class="workbench">
-        <CollectPanel @open-login="loginOpen = true" />
-        <main class="work">
-          <WorkArea @menu="openMenu" @clone="cloneOne" @clients="collectClients" />
-        </main>
-      </div>
-    </template>
+    <!-- 采集 Tab：左侧面板 + 采集主区 -->
+    <div v-show="appState.tab === 'collect'" class="workbench">
+      <CollectPanel @open-login="loginOpen = true" />
+      <main class="work">
+        <WorkArea @menu="openMenu" @clone="cloneOne" @clients="collectClients" />
+      </main>
+    </div>
 
-    <template v-else>
-      <PublishPage ref="publishRef" @back="backFromPublish" />
-    </template>
+    <!-- 创作 Tab：克隆编辑器 + AI 工具条 + 发布前质检（v-show 保持编辑状态） -->
+    <div v-show="appState.tab === 'create'" class="publish-wrap">
+      <PublishPage ref="publishRef" />
+    </div>
+
+    <!-- 客户 Tab：评论区线索 + 聚合 + 获客指引 -->
+    <div v-show="appState.tab === 'clients'" class="work">
+      <div style="max-width:1100px;margin:0 auto;padding:22px 26px">
+        <ClientsPanel ref="clientsRef" />
+      </div>
+    </div>
+
+    <!-- 设置 Tab：AI Key / CDP / 账号人设 -->
+    <div v-show="appState.tab === 'settings'" class="work">
+      <div style="max-width:1100px;margin:0 auto;padding:22px 26px">
+        <SettingsPanel />
+      </div>
+    </div>
 
     <CardMenu :note="menuNote" :x="menuPos.x" :y="menuPos.y" @clone="openPublish" @close="closeMenu" />
 
@@ -174,4 +191,5 @@ onMounted(async () => {
 <style scoped>
 .toast-fade-enter-active, .toast-fade-leave-active { transition: opacity .2s; }
 .toast-fade-enter-from, .toast-fade-leave-to { opacity: 0; }
+.publish-wrap { padding: 0 22px; }
 </style>

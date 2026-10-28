@@ -1,9 +1,24 @@
 import { reactive, readonly } from 'vue'
 import type { Note, SearchParams, Stage } from './types'
 
+/** 工作流 4-Tab（v1.5 对齐同类产品模式）：采集 → 创作 → 客户 → 设置 */
+export type Tab = 'collect' | 'create' | 'clients' | 'settings'
+
+/** 全局共享观察状态（顶部状态条：登录 / CDP / AI Key） */
+export interface SysStatus {
+  cdp: { ok: boolean; state: string; chrome_found: boolean; profile_dir: string; port: number }
+  aiKey: boolean
+}
+
 /** 全局状态：单页一体式工作流 */
 export const appState = reactive({
+  tab: 'collect' as Tab,
   stage: 'input' as Stage,
+  // 全局共享状态（跨页观察：登录态 / CDP / AI Key）
+  sys: {
+    cdp: { ok: false, state: '', chrome_found: false, profile_dir: '', port: 0 },
+    aiKey: false,
+  } as SysStatus,
   // 采集配置
   params: {
     keyword: '翡翠',
@@ -54,6 +69,16 @@ export function toast(msg: string) {
 export function setStage(s: Stage) {
   appState.stage = s
   if (s === 'search') appState.status = '搜索中'
+}
+
+/** 切换工作流 Tab；切到 create 时默认回到创作空态由调用方 openFor 载入 */
+export function setTab(t: Tab) {
+  appState.tab = t
+}
+
+/** 刷新全局共享状态（登录 / CDP / AI Key），由 FlowBar 状态条挂载时调用 */
+export function refreshSysStatus(part: Partial<SysStatus>) {
+  Object.assign(appState.sys, part)
 }
 
 export function toggleSelect(feedId: string) {

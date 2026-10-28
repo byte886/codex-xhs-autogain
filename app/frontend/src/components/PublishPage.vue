@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
-import { appState, coverProxy, setStage, toast } from '../store'
-import { apiClone, apiPublish, apiSaveDraft, apiUploadImage, apiDrafts, apiDraftDelete, apiGetLLMConfig, apiSetLLMConfig, apiTestLLM, apiAiGenerate } from '../api'
+import { computed, ref } from 'vue'
+import { appState, coverProxy, setStage, setTab, toast } from '../store'
+import { apiClone, apiPublish, apiSaveDraft, apiUploadImage, apiDrafts, apiDraftDelete, apiGetLLMConfig, apiAiGenerate } from '../api'
 import type { DraftItem } from '../api'
 import type { Note } from '../types'
 
@@ -160,7 +160,69 @@ async function onAddImages(ev: Event) {
 
 function back() {
   setStage('pick')
+  setTab('collect')
   emit('back')
+}
+
+// ---- F9 发布前质检（v1.5：违规词 / 结构 / 图片二创 / 同质化人工确认） ----
+// 本地确定性规则：违规词扫描 + 结构检查；图片二创与同质化做「人工确认」提示（发布永远手动）
+const Q_ABS_WORDS = ['最好', '最全', '最强', '第一名', '唯一', '全网第一', '国家级', '百分百', '100%', '绝对有效', '顶级', '极致', '最佳', '无敌', '根治', '治愈', '疗效', '永不反弹']
+const Q_DRAIN_WORDS = ['微信', 'vx', 'v信', '薇信', '溦信', '威信', '加我', '电话', '手机号', 'qq', 'QQ', '邮箱', '二维码', '私聊', '主页有', '扣扣', 'v我', 'v 我']
+const qcOpen = ref(false)
+const qcResult = ref<{ abs: string[]; drain: string[]; structure: string[] }>({ abs: [], drain: [], structure: [] })
+
+function runQC() {
+  const titleText = title.value || ''
+  const bodyText = body.value || ''
+  const tagText = tags.value || ''
+  const abs: string[] = []
+  const drain: string[] = []
+  const structure: string[] = []
+  const all = titleText + ' ' + bodyText + ' ' + tagText
+  for (const w of Q_ABS_WORDS) if (all.includes(w)) abs.push(w)
+  for (const w of Q_DRAIN_WORDS) if (all.toLowerCase().includes(w.toLowerCase())) drain.push(w)
+  if (titleText.trim().length < 4) structure.push('标题过短（建议 ≥4 字，前 12 字抓眼球）')
+  if (bodyText.trim().length < 50) structure.push('正文过短（建议 ≥50 字，含分段）')
+  if (bodyText.trim() && !/[\n\r]/.test(bodyText.trim())) structure.push('正文无分段（建议 3 段式：痛点 → 干货 → 引导）')
+  if (!images.value.length) structure.push('未添加图片（图文笔记建议 ≥1 张）')
+  qcResult.value = { abs, drain, structure }
+  return { abs, drain, structure }
+}
+
+const qcPassed = computed(() => {
+  const r = qcResult.value
+  return r.abs.length === 0 && r.drain.length === 0 && r.structure.length === 0
+})
+
+async function publish() {
+  const r = runQC()
+  // 高风险：导流词 / 绝对化用语 → 强确认（不硬拦，发布永远手动，但必须明示风险）
+  const risk = [...r.drain, ...r.abs]
+  if (risk.length) {
+    const ok = window.confirm(`发布前质检发现高风险项：\n${risk.join('、')}\n\n按平台规则这些词可能触发限流/下架。仍要继续发布吗？`)
+    if (!ok) return
+  }
+  // 提示级：结构缺失 + 图片二创 + 同质化 → 人工确认
+  const tips: string[] = [...r.structure]
+  if (images.value.length) tips.push('图片请确认已二创（调色/裁剪/加字/重排）或已获授权——克隆原图直接发布有搬运降权风险')
+  if (tips.length && !window.confirm(`发布前提醒：\n${tips.join('\n')}\n\n已确认内容为你原创/已获授权并处理上述提醒？`)) return
+
+  publishing.value = true
+  try {
+    // 前置检查：后端发布前校验账号与上传通道（现有护栏）
+    const rr = await apiPublish({
+      title: title.value,
+      desc: body.value,
+      tags: tags.value.split(/[\s,，]+/).filter(Boolean).map(t => (t.startsWith('#') ? t : '#' + t)),
+      images: images.value,
+      visible: visible.value
+    })
+    toast(rr.ok ? '发布成功' : `发布失败：${rr.note || '未知原因'}`)
+  } catch (e) {
+    toast(`发布失败：${(e as Error).message}`)
+  } finally {
+    publishing.value = false
+  }
 }
 
 async function saveDraft() {
@@ -179,11 +241,9 @@ async function saveDraft() {
   }
 }
 
-// ---- O1 AI 文稿（Key 门控：未配置时按钮灰态 + 后端 400） ----
+// ---- O1 AI 文稿（Key 门控：未配置时按钮灰态 + 后端 400；配置入口收敛到「设置」Tab） ----
 const aiCfg = ref<{ configured: boolean; openai_base_url: string; default_model: string; llm_api_key_masked: string }>()
-const aiSettingsOpen = ref(false)
 const aiBusy = ref('')
-const aiForm = reactive({ api_key: '', openai_base_url: '', default_model: '' })
 
 async function loadAiCfg() {
   try {
@@ -194,45 +254,13 @@ async function loadAiCfg() {
 }
 loadAiCfg()
 
-function openAiSettings() {
-  aiForm.api_key = ''
-  aiForm.openai_base_url = aiCfg.value?.openai_base_url || ''
-  aiForm.default_model = aiCfg.value?.default_model || ''
-  aiSettingsOpen.value = true
-}
-
-async function saveAiConfig() {
-  if (!aiForm.openai_base_url || !aiForm.default_model) {
-    toast('请填写 Base URL 与模型名称')
-    return
-  }
-  try {
-    await apiSetLLMConfig({ ...aiForm })
-    aiSettingsOpen.value = false
-    await loadAiCfg()
-    toast('AI 配置已保存')
-  } catch (e) {
-    toast(`保存失败：${(e as Error).message}`)
-  }
-}
-
-async function testAiConfig() {
-  try {
-    const r = await apiTestLLM({ ...aiForm })
-    if (r.ok) {
-      const extra = r.model_available === false ? '（模型不在清单，可忽略）' : ''
-      toast(`连接成功：可用模型 ${r.count ?? 0} 个${extra}`)
-    } else {
-      toast(`测试失败：${r.error || '未知原因'}`)
-    }
-  } catch (e) {
-    toast(`测试失败：${(e as Error).message}`)
-  }
+function gotoAiSettings() {
+  setTab('settings')
 }
 
 async function aiRun(action: string) {
   if (!aiCfg.value?.configured) {
-    toast('未配置 AI 模型：请先点「AI 设置」配置 API Key / Base URL / 模型')
+    toast('未配置 AI 模型：请先到「设置」Tab 配置 API Key / Base URL / 模型')
     return
   }
   aiBusy.value = action
@@ -246,25 +274,6 @@ async function aiRun(action: string) {
     toast(`AI 生成失败：${(e as Error).message}`)
   } finally {
     aiBusy.value = ''
-  }
-}
-
-async function publish() {
-  publishing.value = true
-  try {
-    // 前置检查：后端发布前校验账号与上传通道（现有护栏）
-    const r = await apiPublish({
-      title: title.value,
-      desc: body.value,
-      tags: tags.value.split(/[\s,，]+/).filter(Boolean).map(t => (t.startsWith('#') ? t : '#' + t)),
-      images: images.value,
-      visible: visible.value
-    })
-    toast(r.ok ? '发布成功' : `发布失败：${r.note || '未知原因'}`)
-  } catch (e) {
-    toast(`发布失败：${(e as Error).message}`)
-  } finally {
-    publishing.value = false
   }
 }
 </script>
@@ -289,20 +298,7 @@ async function publish() {
           <button class="ai-btn" :disabled="!aiCfg?.configured || !!aiBusy" @click="aiRun('body_create')">{{ aiBusy === 'body_create' ? '…' : 'AI 创作正文' }}</button>
           <button class="ai-btn" :disabled="!aiCfg?.configured || !!aiBusy" @click="aiRun('body_rewrite')">{{ aiBusy === 'body_rewrite' ? '…' : 'AI 改写正文' }}</button>
           <button class="ai-btn" :disabled="!aiCfg?.configured || !!aiBusy" @click="aiRun('tags')">{{ aiBusy === 'tags' ? '…' : 'AI 提取标签' }}</button>
-          <button class="ai-btn ghost" @click="openAiSettings">AI 设置{{ aiCfg?.configured ? '' : '（未配置）' }}</button>
-        </div>
-        <div v-if="aiSettingsOpen" class="ai-settings">
-          <label>API Key <span class="limit">{{ aiCfg?.llm_api_key_masked ? '已配置 ' + aiCfg.llm_api_key_masked + '（留空保留）' : '必填' }}</span></label>
-          <input v-model="aiForm.api_key" type="password" placeholder="sk-..." style="width:100%" />
-          <label>Base URL（OpenAI 兼容端点）</label>
-          <input v-model="aiForm.openai_base_url" placeholder="https://api.openai.com/v1" style="width:100%" />
-          <label>模型名称</label>
-          <input v-model="aiForm.default_model" placeholder="gpt-4o-mini / deepseek-chat / claude-…" style="width:100%" />
-          <div class="ai-settings-actions">
-            <button class="ai-btn" @click="testAiConfig">测试连接</button>
-            <button class="ai-btn primary" @click="saveAiConfig">保存</button>
-          </div>
-          <p class="ai-hint">兼容 OpenAI / DeepSeek / 通义 / 中转站 / Claude（base_url 填 api.anthropic.com/v1 + Claude 模型名）</p>
+          <button class="ai-btn ghost" @click="gotoAiSettings">AI 设置{{ aiCfg?.configured ? '' : '（未配置）' }} → 设置</button>
         </div>
         <div class="pub-field">
           <label>标题 <span class="limit">{{ tCount }}/50</span></label>
@@ -315,6 +311,41 @@ async function publish() {
         <div class="pub-field">
           <label>话题标签 <span class="limit">空格分隔</span></label>
           <input v-model="tags" placeholder="#翡翠 #手镯 #珠宝" style="width:100%" />
+        </div>
+        <!-- F9 发布前质检（折叠；发布按钮自动跑 + 高风险强确认） -->
+        <div class="qc-card">
+          <div class="qc-head" @click="qcOpen = !qcOpen">
+            <span class="qc-title">
+              🔍 发布前质检
+              <span v-if="qcPassed" class="qc-badge ok">无风险项</span>
+              <span v-else class="qc-badge warn">{{ qcResult.abs.length + qcResult.drain.length + qcResult.structure.length }} 项提醒</span>
+            </span>
+            <span class="qc-toggle">{{ qcOpen ? '收起 ▲' : '展开 ▼' }}</span>
+          </div>
+          <div v-if="qcOpen" class="qc-body">
+            <div class="qc-item" :class="{ pass: !qcResult.drain.length && !qcResult.abs.length }">
+              <div class="qc-t">① 违规词识别（绝对化用语 / 导流词，含谐音）</div>
+              <div v-if="!qcResult.drain.length && !qcResult.abs.length" class="qc-ok">✓ 未发现违规词</div>
+              <div v-else class="qc-fail">
+                <span v-if="qcResult.drain.length">导流词：{{ qcResult.drain.join('、') }}（平台导流红线，可能屏蔽/限流）</span>
+                <span v-if="qcResult.abs.length">绝对化用语：{{ qcResult.abs.join('、') }}（广告法风险）</span>
+              </div>
+            </div>
+            <div class="qc-item" :class="{ pass: !qcResult.structure.length }">
+              <div class="qc-t">② 结构检查（标题/正文/分段/配图）</div>
+              <div v-if="!qcResult.structure.length" class="qc-ok">✓ 结构完整</div>
+              <div v-else class="qc-fail">{{ qcResult.structure.join('；') }}</div>
+            </div>
+            <div class="qc-item">
+              <div class="qc-t">③ 图片二创提醒</div>
+              <div class="qc-warn">⚠ 克隆图片直接发布 = 搬运风险（可能下架/降权）。建议调色 / 裁剪 / 加字 / 重排后发布，或补充实拍素材。</div>
+            </div>
+            <div class="qc-item">
+              <div class="qc-t">④ 原创确认（同质化）</div>
+              <div class="qc-warn">⚠ 平台 2026 原创审核升级：仅"微改"参考爆文仍判同质化。发布前请确认：内容为你原创表达 / 已获授权。</div>
+            </div>
+            <div class="qc-sum">发布时自动再次检查：高风险项（导流词/绝对化用语）会弹窗强确认；其余提醒确认后可发布。<b>发布永远手动。</b></div>
+          </div>
         </div>
         <div class="pub-field">
           <label>图片 <span class="limit">拖拽调序 / 点击看全图 / 删改 / 追加</span></label>
