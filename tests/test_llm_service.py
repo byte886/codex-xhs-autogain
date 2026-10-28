@@ -199,3 +199,137 @@ class _FakeResp:
 
     def json(self):
         return self._json
+
+
+# ==================== 补充：HTTP 错误层 + 全动作覆盖（mock 闭环，不需真实 Key） ====================
+
+class _FakePost:
+    """模拟 httpx AsyncClient.post：可注入状态码/json/异常。"""
+
+    def __init__(self, status=200, json=None, exc=None):
+        self.status = status
+        self._json = json if json is not None else {"choices": [{"message": {"content": "模拟正文"}}]}
+        self.exc = exc
+        self.called = {}
+
+    async def __call__(self, url, **kw):
+        self.called["url"] = url
+        self.called["kw"] = kw
+        if self.exc is not None:
+            raise self.exc
+        return _FakeResp(self.status, self._json)
+
+
+def test_llm_chat_payload_and_success(llm_cfg, monkeypatch):
+    """chat：构造 OpenAI 兼容 payload（model/messages/max_tokens/temperature）并成功解析。"""
+    llm_service.save_config("sk-k", "https://api.openai.com/v1", "gpt-4o-mini")
+    fake = _FakePost(json={"choices": [{"message": {"content": "  正文结果  "}}]})
+    monkeypatch.setattr(llm_service.httpx.AsyncClient, "post", fake)
+    out = asyncio.run(llm_service.chat("系统", "用户"))
+    assert out == "正文结果"
+    assert fake.called["url"].endswith("/chat/completions")
+    payload = fake.called["kw"]["json"]
+    assert payload["model"] == "gpt-4o-mini"
+    assert payload["messages"][0]["content"] == "系统"
+    assert payload["messages"][1]["content"] == "用户"
+    assert payload["max_tokens"] == 1200 and payload["temperature"] == 0.7
+
+
+def test_llm_chat_http_error_raises(llm_cfg, monkeypatch):
+    """chat：网络异常 → ValueError（上层转 400）。"""
+    llm_service.save_config("sk-k", "https://api.openai.com/v1", "gpt-4o-mini")
+    fake = _FakePost(exc=httpx_connect_error())
+    monkeypatch.setattr(llm_service.httpx.AsyncClient, "post", fake)
+    with pytest.raises(ValueError, match="AI 请求失败"):
+        asyncio.run(llm_service.chat("s", "u"))
+
+
+def test_llm_chat_non_200_raises(llm_cfg, monkeypatch):
+    """chat：非 200（如 429 限流）→ ValueError 含 HTTP 码。"""
+    llm_service.save_config("sk-k", "https://api.openai.com/v1", "gpt-4o-mini")
+    fake = _FakePost(status=429, json={"error": {"message": "rate limited"}})
+    monkeypatch.setattr(llm_service.httpx.AsyncClient, "post", fake)
+    with pytest.raises(ValueError, match="HTTP 429"):
+        asyncio.run(llm_service.chat("s", "u"))
+
+
+def test_llm_chat_bad_response_format(llm_cfg, monkeypatch):
+    """chat：200 但响应缺 choices → ValueError 提示格式异常。"""
+    llm_service.save_config("sk-k", "https://api.openai.com/v1", "gpt-4o-mini")
+    fake = _FakePost(status=200, json={"foo": "bar"})
+    monkeypatch.setattr(llm_service.httpx.AsyncClient, "post", fake)
+    with pytest.raises(ValueError, match="格式异常"):
+        asyncio.run(llm_service.chat("s", "u"))
+
+
+def test_connection_http_error(llm_cfg, monkeypatch):
+    """test_connection：网络异常 → ok=False 且提示连接失败。"""
+    async def fake_get(self, url, **kw):
+        raise httpx_connect_error()
+
+    monkeypatch.setattr(llm_service.httpx.AsyncClient, "get", fake_get)
+    r = asyncio.run(llm_service.test_connection("https://api.openai.com/v1", "sk-k", "gpt-4o-mini"))
+    assert r["ok"] is False and "连接失败" in r["error"]
+
+
+def test_connection_non_200(llm_cfg, monkeypatch):
+    """test_connection：401 → ok=False 且带 HTTP 码。"""
+    async def fake_get(self, url, **kw):
+        return _FakeResp(401, {"error": "unauthorized"})
+
+    monkeypatch.setattr(llm_service.httpx.AsyncClient, "get", fake_get)
+    r = asyncio.run(llm_service.test_connection("https://api.openai.com/v1", "sk-bad", "gpt-4o-mini"))
+    assert r["ok"] is False and "401" in r["error"]
+
+
+def test_ai_generate_remaining_actions(llm_cfg, monkeypatch):
+    """未测的 title_summarize / body_rewrite / tags 成功路径 + prompt 参数注入。"""
+    llm_service.save_config("sk-k", "https://api.openai.com/v1", "gpt-4o-mini")
+    monkeypatch.setattr(server, "llm_service", llm_service)
+    captured = {}
+
+    async def fake_chat(system, user, **kw):
+        captured["user"] = user
+        return "生成结果"
+
+    monkeypatch.setattr(llm_service, "chat", fake_chat)
+    c = TestClient(server.app)
+
+    r = c.post("/api/ai_generate", json={"action": "title_summarize", "note": {"title": "翡翠怎么挑"}})
+    assert r.status_code == 200 and r.json()["result"] == "生成结果"
+    assert "标题" in captured["user"] and "翡翠怎么挑" in captured["user"]
+
+    r = c.post("/api/ai_generate", json={"action": "body_rewrite", "note": {"desc": "原正文内容"}})
+    assert r.status_code == 200
+    assert "原正文" in captured["user"] and "原正文内容" in captured["user"]
+
+    r = c.post("/api/ai_generate", json={"action": "tags", "note": {"title": "翡翠", "desc": "干货", "keyword": "珠宝"}})
+    assert r.status_code == 200
+    assert "珠宝" in captured["user"] and "标签" in captured["user"]
+
+
+def test_ai_generate_truncation(llm_cfg, monkeypatch):
+    """超长 title/desc 在拼 prompt 前截断（title≤500 / desc≤2000），避免注入超限。"""
+    llm_service.save_config("sk-k", "https://api.openai.com/v1", "gpt-4o-mini")
+    monkeypatch.setattr(server, "llm_service", llm_service)
+    captured = {}
+
+    async def fake_chat(system, user, **kw):
+        captured["user"] = user
+        return "ok"
+
+    monkeypatch.setattr(llm_service, "chat", fake_chat)
+    c = TestClient(server.app)
+    r = c.post("/api/ai_generate", json={"action": "title_rewrite", "note": {"title": "玉" * 600}})
+    assert r.status_code == 200
+    # 截断后 title 片段最长 500 个「玉」
+    assert "玉" * 501 not in captured["user"]
+    assert captured["user"].count("玉") <= 500
+
+
+def httpx_connect_error():
+    import httpx
+    return httpx.ConnectError("mock connect failed")
+
+
+_ = _FakePost  # 供未来扩展引用（避免未使用告警）
