@@ -131,9 +131,16 @@ def _init_tables(con):
     con.execute("""
         CREATE TABLE IF NOT EXISTS clients (
             uid TEXT, feed_id TEXT, nickname TEXT, comment TEXT, profile TEXT, created_at TEXT,
+            intent TEXT, matched_word TEXT, ip_location TEXT, comment_time TEXT,
             PRIMARY KEY (uid, feed_id)
         )
     """)
+    # O1-3：老库补意向/属地/时间列（幂等）
+    for col in ("intent", "matched_word", "ip_location", "comment_time"):
+        try:
+            con.execute(f"ALTER TABLE clients ADD COLUMN {col} TEXT")
+        except sqlite3.OperationalError:
+            pass  # 列已存在
     # 评分明细（score_info JSON：4 维度得分，卡片右上角分数可解释）；老库补列
     try:
         con.execute("ALTER TABLE notes ADD COLUMN score_info TEXT")
@@ -994,9 +1001,11 @@ class ClientsReq(BaseModel):
 
 @app.post("/api/clients")
 async def collect_clients(req: ClientsReq):
-    """采集笔记评论区互动用户名单（P4）：真实浏览器打开原作品页提取评论用户，入库去重。
+    """采集笔记评论区互动用户名单（O1-3）：真实浏览器打开原作品页提取评论用户（含属地/时间），
+    意向分级（需求词命中法）后入库去重。
 
     图文与视频笔记均支持（评论区都有互动用户）。每次采集访问一次真实页面，频次受浏览器全局锁约束。
+    风控处理：触发验证码/风险页时返回 429（已采部分保留，前端提示停用 ≥24h，绝不自动重试）。
     """
     await _require_login()
     try:
@@ -1010,43 +1019,78 @@ async def collect_clients(req: ClientsReq):
             if row and row[0]:
                 token = row[0]
         users = await browser_client.clients(req.feed_id, token)
+    except HTTPException as e:
+        # 风控风险页：已采部分保留（历史入库记录不动），明确提示停用窗口，不自动重试
+        raise HTTPException(429, "触发平台风险拦截，建议停用 ≥24h，人工确认后再恢复采集") from e
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"浏览器采集失败：{e}")
+        raise HTTPException(502, f"浏览器采集失败：{e}") from e
+    from codex_xhs.intent import grade_batch
+    grade_batch(users)
     con = _db()
     ts = datetime.datetime.now().isoformat(timespec="seconds")
     added = 0
     for u in users:
         cur = con.execute(
-            "INSERT OR IGNORE INTO clients (uid, feed_id, nickname, comment, profile, created_at) "
-            "VALUES (?,?,?,?,?,?)",
-            (u.get("uid", ""), req.feed_id, u.get("nickname", ""), u.get("comment", ""), u.get("profile", ""), ts),
+            "INSERT OR IGNORE INTO clients "
+            "(uid, feed_id, nickname, comment, profile, created_at, intent, matched_word, ip_location, comment_time) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                u.get("uid", ""), req.feed_id, u.get("nickname", ""), u.get("comment", ""),
+                u.get("profile", ""), ts, u.get("intent", "low"), u.get("matched_word", ""),
+                u.get("ip_location", ""), u.get("comment_time", ""),
+            ),
         )
         added += cur.rowcount
     con.commit()
-    return {"total": len(users), "new": added, "users": users}
+    from codex_xhs.intent import INTENT_LABEL
+    summary = {}
+    for u in users:
+        label = INTENT_LABEL.get(u.get("intent"), "低意向")
+        summary[label] = summary.get(label, 0) + 1
+    return {"total": len(users), "new": added, "users": users, "summary": summary}
 
 
 # ================= 客户库（P4 价值视图）：已采集互动用户按足迹聚合 =================
 @app.get("/api/clients_list")
-def clients_list(feed_id: str = ""):
+def clients_list(feed_id: str = "", intent: str = ""):
     """查询客户库：按用户聚合互动足迹（评论次数多 + 关联笔记多 = 更活跃、更有价值）。
+    附带意向分级（最高档位 + 属地 + 命中词）。
 
-    可选 feed_id 只看某笔记的互动用户；默认返回全部（按评论次数 desc）。"""
+    可选 feed_id 只看某笔记的互动用户；intent 过滤档位；默认返回全部（按意向档位+评论次数 desc）。"""
     con = _db()
+    where = []
+    params = []
+    if feed_id:
+        where.append("feed_id = ?")
+        params.append(feed_id)
+    if intent:
+        where.append("intent = ?")
+        params.append(intent)
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    # 档位数值（CASE 映射）：高4 > 上3 > 中2 > 低1；每人取最高档位（同档取最新）
+    intent_rank_sql = (
+        "CASE intent WHEN 'high' THEN 4 WHEN 'upper' THEN 3 WHEN 'middle' THEN 2 ELSE 1 END"
+    )
     sql = (
         "SELECT uid, MAX(nickname) AS nickname, COUNT(*) AS comment_count, "
         "COUNT(DISTINCT feed_id) AS note_count, "
         "(SELECT comment FROM clients c2 WHERE c2.uid = clients.uid ORDER BY created_at DESC LIMIT 1) AS sample_comment, "
-        "MAX(profile) AS profile, MAX(created_at) AS created_at "
-        "FROM clients"
+        "MAX(profile) AS profile, MAX(created_at) AS created_at, "
+        "(SELECT intent FROM clients c6 WHERE c6.uid = clients.uid "
+        " ORDER BY " + intent_rank_sql + " DESC, c6.created_at DESC LIMIT 1) AS intent, "
+        "(SELECT matched_word FROM clients c7 WHERE c7.uid = clients.uid "
+        " ORDER BY " + intent_rank_sql + " DESC, c7.created_at DESC LIMIT 1) AS matched_word, "
+        "(SELECT ip_location FROM clients c4 WHERE c4.uid = clients.uid ORDER BY created_at DESC LIMIT 1) AS ip_location, "
+        "(SELECT comment_time FROM clients c5 WHERE c5.uid = clients.uid ORDER BY created_at DESC LIMIT 1) AS comment_time "
+        "FROM clients" + where_sql + " GROUP BY uid"
     )
-    params = []
-    if feed_id:
-        sql += " WHERE feed_id = ?"
-        params.append(feed_id)
-    sql += " GROUP BY uid ORDER BY comment_count DESC, note_count DESC LIMIT 200"
     rows = con.execute(sql, params).fetchall()
-    return {"total": len(rows), "clients": [dict(r) for r in rows]}
+    from codex_xhs.intent import intent_rank
+    ordered = sorted(
+        rows, key=lambda r: (intent_rank(r["intent"]), r["comment_count"], r["note_count"]), reverse=True
+    )
+    ordered = ordered[:200]
+    return {"total": len(ordered), "clients": [dict(r) for r in ordered]}
 
 
 # ================= Cookie（显示 / 一键从 Chrome 导入） =================

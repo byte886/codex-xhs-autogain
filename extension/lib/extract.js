@@ -190,9 +190,11 @@ function xhsExtractComments(root = document) {
     const uid = m[1];
     const nick = (a.innerText || '').trim();
     if (!nick || NAV.has(nick)) continue;
-    // 向上找最近的评论条，取第一条像评论文本的内容（排除时间/IP/纯数字/导航词）
+    // 向上找最近的评论条，取第一条像评论文本的内容（排除时间/IP/纯数字/导航词）；同时收集属地与时间
     let cont = a.parentElement;
     let comment = '';
+    let ipLocation = '';
+    let commentTime = '';
     for (let i = 0; i < 5 && cont; i++) {
       const spans = [...cont.querySelectorAll('span, div, p')]
         .map((e) => e.innerText.trim())
@@ -204,6 +206,14 @@ function xhsExtractComments(root = document) {
         && !NAV.has(t)
         && !AREA.has(t)
       ));
+      if (!ipLocation) {
+        const ip = spans.find((t) => AREA.has(t));
+        if (ip) ipLocation = ip;
+      }
+      if (!commentTime) {
+        const tm = spans.find((t) => TIME.test(t));
+        if (tm) commentTime = tm;
+      }
       if (cand) {
         const first = cand.split('\n')[0].trim();
         if (first === nick) continue;                    // 作者徽标条目（无独立评论文本）
@@ -221,6 +231,8 @@ function xhsExtractComments(root = document) {
       uid,
       nickname: nick,
       comment: comment.slice(0, 300),
+      ip_location: ipLocation,
+      comment_time: commentTime,
       profile: 'https://www.xiaohongshu.com/user/profile/' + uid,
     });
   }

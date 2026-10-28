@@ -364,7 +364,8 @@ tr:hover td{background:#FAFAFA}
           <button disabled>AI 改写正文</button>
           <button disabled>AI 提取标签</button>
         </div>
-        <div class="ai-out" style="display:block">🔒 已配置 Key 后可用：<br>· 标题 ≤20 字，保留爆款方向<br>· 正文 800-1200 字 + emoji + 3-5 标签<br>· 结果全部可编辑</div>
+        <div class="ai-out" style="display:block">🔒 已配置 Key 后可用（解锁态示意）：<br>· 标题 ≤20 字，保留爆款方向<br>· 正文 800-1200 字 + emoji + 3-5 标签<br>· 生成结果自动落入左侧「创作区」，可继续编辑，再走手动发布/存草稿<br>· 生成示例如下（示例数据，实际以 LLM 输出为准）</div>
+        <div class="ai-out" style="display:block;background:#F2F8F2;border-color:#00A86B;color:#2E5A3A"><b>示例输出</b>｜标题：<i>翡翠手镯挑选避坑 3 要点，小白必看</i><br>标签：#翡翠手镯 #玉镯挑选 #珠宝避坑 #手镯款式 #新手必看</div>
       </div>
     </div>
   </section>
@@ -379,6 +380,7 @@ tr:hover td{background:#FAFAFA}
       <div class="cdp-row"><span class="k">调试端口</span><input type="text" value="9223（独立 Profile ~/.codex-xhs-profile）" disabled></div>
       <div class="cdp-status"><span class="ok">✓ Chrome 已检测到 · Profile 已登录小红书 · 调试可用</span><br><span>生产脚本：macOS / Windows 双脚本带参数启动 Chrome 打开配置页（Python 参数化），未找到 Chrome 时 APP 提示并提供链接，配置好后按钮才可用。</span></div>
       <div style="margin-top:12px;display:flex;gap:8px"><button class="btn primary">保存并验证</button><button class="btn">引导教程</button></div>
+      <div class="cdp-status warn" style="margin-top:14px;border-top:1px dashed var(--line);padding-top:10px">⚠ 未配置状态示意：Chrome 路径为空 / 检测失败时 → 「保存并验证」灰态，显示引导文案「未找到可用 Chrome，请按教程配置或手动指定路径」，采集/克隆按钮同步灰态；配置成功后按钮解锁。</div>
     </div>
   </section>
 
@@ -452,11 +454,12 @@ function renderNotes(){
     const c=document.createElement("div");c.className="note-card";
     c.innerHTML=`<div class="cover">
       <div class="ph">🖼</div><span class="badge-type">${n.type}</span><span class="score">${n.score}
-        <span class="dims"><b>评分组成（CES 公式+综合）</b>
+        <span class="dims"><b>评分组成（权重：互动60% · 爆文率25% · 新鲜度10% · 评论信号5%）</b>
           <span class="dim"><span>互动得分（赞藏评转）</span><i>${Math.round(n.score*.6)}</i></span>
           <span class="dim"><span>爆文率（低粉高互动）</span><i>${Math.round(n.score*.25)}</i></span>
           <span class="dim"><span>新鲜度（近7天）</span><i>${Math.round(n.score*.1)}</i></span>
           <span class="dim"><span>评论信号质量</span><i>${Math.round(n.score*.05)}</i></span>
+          <span class="dim" style="border-top:1px dashed var(--line);padding-top:4px"><span>算法说明</span><i>CES 赞1·藏1·评4·转4·关8</i></span>
         </span></span>
       <div class="hover-bar">
         <button class="hbtn cust" onclick="collectClient(${i})">采集客户</button>
