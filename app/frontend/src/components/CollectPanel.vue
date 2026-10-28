@@ -117,6 +117,25 @@ const timeOptions = ['不限', '一天内', '一周内', '半年内']
 const scopeOptions = ['不限', '已看过', '未看过', '已关注']
 const distanceOptions = ['不限', '同城', '附近']
 
+/** 已选筛选条件汇总：跳过默认值（综合/全部/不限），返回“非默认”条件列表 */
+function activeFilters(): string[] {
+  const p = appState.params
+  const items: string[] = []
+  if (p.sort && p.sort !== '综合') items.push(`排序 ${p.sort}`)
+  if (p.noteType && p.noteType !== '全部') items.push(`类型 ${p.noteType}`)
+  if (p.timeRange && p.timeRange !== '不限') items.push(`时间 ${p.timeRange}`)
+  if (p.scope && p.scope !== '不限') items.push(`范围 ${p.scope}`)
+  if (p.distance && p.distance !== '不限') items.push(`距离 ${p.distance}`)
+  return items
+}
+
+/** 任务标签：关键词 + 全部已选筛选条件（对齐小红书搜索筛选） */
+function buildTaskLabel(): string {
+  const p = appState.params
+  const f = activeFilters()
+  return `${p.keyword}${f.length ? ' · ' + f.join(' · ') : '（未选筛选）'}`
+}
+
 let collectTaskId = ''
 let collectTimer: ReturnType<typeof setInterval> | null = null
 
@@ -134,7 +153,7 @@ async function doCollect() {
   appState.collecting = true
   appState.status = '采集中'
   appState.selected = {}
-  appState.taskLabel = `${appState.params.keyword} · ${appState.params.sort} · ${appState.params.noteType}`
+  appState.taskLabel = buildTaskLabel()
   appState.searchNote = ''
   appState.elapsed = 0
   if (timer) clearInterval(timer)
@@ -293,6 +312,14 @@ onMounted(async () => {
             </select>
           </div>
         </div>
+        <!-- 已选筛选汇总：非默认条件实时提示，采集时写入任务标签 -->
+        <div class="param-row">
+          <div class="filters-hint">
+            <span class="filters-hint-k">已选筛选</span>
+            <span v-if="activeFilters().length" class="filters-hint-v">{{ activeFilters().join(' · ') }}</span>
+            <span v-else class="filters-hint-none">未选择（按小红书默认：综合 / 全部 / 不限）</span>
+          </div>
+        </div>
         <div class="param-row">
           <label class="fast-toggle" title="快速档：逐条打开笔记详情/作者主页补全互动与粉丝数时不做拟人等待，速度快约一半；默认关闭（拟人节奏，更安全）">
             <input type="checkbox" v-model="appState.params.fast" />
@@ -449,6 +476,21 @@ onMounted(async () => {
 @keyframes btn-spin {
   to { transform: rotate(360deg); }
 }
+/* 已选筛选汇总行 */
+.filters-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  font-size: 11px;
+  background: #F8F9FA;
+  border: 1px dashed var(--line, #e5e5e5);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+.filters-hint-k { color: var(--ink-2, #888); font-weight: 600; flex-shrink: 0; }
+.filters-hint-v { color: #b08a4d; font-weight: 600; }
+.filters-hint-none { color: var(--ink-3, #aaa); }
 </style>
 <style scoped>
 .cdp-box { border: 1px solid #f0f0f0; border-radius: 8px; padding: 10px; }
