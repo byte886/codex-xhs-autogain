@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { appState, setStage } from '../store'
-import type { Note, Author, ClientUser } from '../types'
-import { apiAuthors, apiClientsList } from '../api'
+import type { Note, Author, ClientUser, ClientsAgg } from '../types'
+import { apiAuthors, apiClientsList, apiClientsAgg } from '../api'
 import CardGrid from './CardGrid.vue'
 
 const emit = defineEmits<{
@@ -18,6 +18,8 @@ const authors = ref<Author[]>([])
 const authorsLoaded = ref(false)
 const clients = ref<ClientUser[]>([])
 const clientsLoaded = ref(false)
+/** O1-4 聚合数据（意向分布/属地TOP/近7天/留联系方式） */
+const agg = ref<ClientsAgg | null>(null)
 /** O1-3 意向筛选：'' 全部 / high 高意向 / 7d 近7天 */
 const clIntent = ref('')
 const clTab = ref<'all' | 'high' | '7d'>('all')
@@ -99,10 +101,19 @@ async function loadClients() {
   }
 }
 
+/** O1-4 加载聚合数据（线索总数/意向分布/属地TOP/近7天/留联系方式） */
+async function loadAgg() {
+  try {
+    agg.value = await apiClientsAgg()
+  } catch {
+    agg.value = null
+  }
+}
+
 async function showClients() {
   view.value = 'clients'
   if (!clientsLoaded.value) {
-    await loadClients()
+    await Promise.all([loadClients(), loadAgg()])
     clientsLoaded.value = true
   }
 }
@@ -238,12 +249,43 @@ function openProfile(p: string | null) {
         </div>
         <template v-else>
           <div class="info-bar">
-            <div class="info-item"><span class="k">线索总数</span><span class="v">{{ clSummary().total }}</span></div>
+            <div class="info-item"><span class="k">线索总数</span><span class="v">{{ agg?.total ?? clSummary().total }}</span></div>
             <div class="info-item"><span class="k">高意向</span><span class="v" style="color:#FF2442">{{ clSummary().high }}</span></div>
-            <div class="info-item"><span class="k">留联系方式命中</span><span class="v" style="color:#00A86B">{{ clSummary().contact }}</span></div>
+            <div class="info-item"><span class="k">留联系方式命中</span><span class="v" style="color:#00A86B">{{ agg?.contact ?? clSummary().contact }}</span></div>
             <div class="info-item"><span class="k">采集说明</span><span class="v small">高意向置顶，其余按互动足迹排序；「去私信」仅生成话术，发送由你确认</span></div>
             <div style="margin-left:auto;display:flex;gap:8px">
               <button class="btn sm primary" @click="exportClientsCsv">导出线索 CSV</button>
+            </div>
+          </div>
+          <!-- O1-4 聚合区：意向分布 / 属地 TOP / 近 7 天产出 -->
+          <div v-if="agg" class="agg-grid">
+            <div class="agg-card">
+              <div class="agg-title">意向分布</div>
+              <div class="agg-dist">
+                <div v-for="d in agg.intent_dist" :key="d.intent" class="agg-dist-row">
+                  <span class="agg-dist-label">{{ d.label }}</span>
+                  <div class="agg-bar"><div class="agg-bar-fill" :class="'a-' + d.intent" :style="{ width: agg.total ? Math.max(4, (d.count / agg.total) * 100) + '%' : '0%' }"></div></div>
+                  <span class="agg-dist-count">{{ d.count }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="agg-card">
+              <div class="agg-title">属地分布 TOP</div>
+              <div v-if="agg.ip_top.length" class="agg-ip">
+                <div v-for="t in agg.ip_top" :key="t.ip" class="agg-ip-row">
+                  <span class="agg-ip-name">📍 {{ t.ip }}</span><span class="agg-ip-count">{{ t.count }} 人</span>
+                </div>
+              </div>
+              <div v-else class="agg-empty">暂无属地数据</div>
+            </div>
+            <div class="agg-card agg-week-card">
+              <div class="agg-title">近 7 天产出</div>
+              <div class="agg-week">
+                <div v-for="w in agg.week" :key="w.date" class="agg-week-col">
+                  <div class="agg-week-bar" :style="{ height: Math.max(4, (w.count / Math.max(1, agg.total)) * 60) + 'px' }">{{ w.count || '' }}</div>
+                  <div class="agg-week-day">{{ w.date.slice(5) }}</div>
+                </div>
+              </div>
             </div>
           </div>
           <div style="display:flex;gap:6px;margin-bottom:10px">
@@ -507,5 +549,109 @@ function openProfile(p: string | null) {
 }
 .cl-act {
   flex-shrink: 0;
+}
+/* ===== O1-4 聚合区 ===== */
+.agg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.4fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.agg-card {
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--line, #ececec);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.agg-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-1, #222);
+  margin-bottom: 10px;
+}
+.agg-dist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.agg-dist-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.agg-dist-label {
+  width: 44px;
+  color: var(--ink-2, #666);
+  flex-shrink: 0;
+}
+.agg-bar {
+  flex: 1;
+  height: 10px;
+  background: var(--bg-2, #f4f5f6);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.agg-bar-fill {
+  height: 100%;
+  border-radius: 5px;
+}
+.agg-bar-fill.a-high { background: #FF2442; }
+.agg-bar-fill.a-upper { background: #FF9D5C; }
+.agg-bar-fill.a-middle { background: #F79009; }
+.agg-bar-fill.a-low { background: #9AA5B1; }
+.agg-dist-count {
+  width: 20px;
+  text-align: right;
+  font-weight: 600;
+  color: var(--ink-1, #222);
+}
+.agg-ip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.agg-ip-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 3px 0;
+  border-bottom: 1px dashed var(--line, #f0f0f0);
+}
+.agg-ip-name { color: var(--ink-1, #333); }
+.agg-ip-count { color: var(--ink-2, #888); }
+.agg-empty {
+  font-size: 12px;
+  color: var(--ink-2, #aaa);
+  padding: 12px 0;
+}
+.agg-week {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 76px;
+}
+.agg-week-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+}
+.agg-week-bar {
+  width: 100%;
+  max-width: 26px;
+  min-height: 4px;
+  background: linear-gradient(180deg, #e0b36b, #b08a4d);
+  border-radius: 4px 4px 0 0;
+  font-size: 10px;
+  color: #b08a4d;
+  text-align: center;
+}
+.agg-week-day {
+  font-size: 10px;
+  color: var(--ink-2, #999);
+  margin-top: 4px;
 }
 </style>

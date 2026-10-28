@@ -1093,6 +1093,54 @@ def clients_list(feed_id: str = "", intent: str = ""):
     return {"total": len(ordered), "clients": [dict(r) for r in ordered]}
 
 
+# ================= 客户库聚合（O1-4）：线索/意向分布/属地TOP/近7天/留联系方式 =================
+@app.get("/api/clients_agg")
+def clients_agg():
+    """数据聚合：线索总数 / 意向分布（四档计数）/ 属地 TOP / 近 7 天产出 / 留联系方式命中。
+
+    与 /api/clients_list 同一数据源，聚合数字与明细一致（验收标准）。
+    """
+    con = _db()
+    from codex_xhs.intent import INTENT_LABEL, intent_rank, is_contact
+    rows = con.execute(
+        "SELECT intent, matched_word, comment, ip_location, created_at FROM clients"
+    ).fetchall()
+    # 意向分布（按档位数值排序输出：高→上→中→低）
+    dist = {k: 0 for k in ("high", "upper", "middle", "low")}
+    ip_counts: dict[str, int] = {}
+    day_counts: dict[str, int] = {}
+    contact = 0
+    for r in rows:
+        it = r["intent"] or "low"
+        dist[it] = dist.get(it, 0) + 1
+        ip = (r["ip_location"] or "").strip()
+        if ip:
+            ip_counts[ip] = ip_counts.get(ip, 0) + 1
+        d = (r["created_at"] or "")[:10]
+        if d:
+            day_counts[d] = day_counts.get(d, 0) + 1
+        if is_contact(r["comment"] or "", r["matched_word"] or ""):
+            contact += 1
+    intent_dist = [
+        {"intent": k, "label": INTENT_LABEL[k], "count": dist[k]}
+        for k in sorted(dist, key=intent_rank, reverse=True)
+    ]
+    ip_top = [{"ip": k, "count": v} for k, v in sorted(ip_counts.items(), key=lambda x: -x[1])[:6]]
+    # 近 7 天时间线：含今天往前 7 天，无数据的天补 0
+    days = []
+    today = datetime.date.today()
+    for i in range(6, -1, -1):
+        d = (today - datetime.timedelta(days=i)).isoformat()
+        days.append({"date": d, "count": day_counts.get(d, 0)})
+    return {
+        "total": len(rows),
+        "intent_dist": intent_dist,
+        "ip_top": ip_top,
+        "week": days,
+        "contact": contact,
+    }
+
+
 # ================= Cookie（显示 / 一键从 Chrome 导入） =================
 _COOKIE_ORDER = ["web_session", "last_web_session", "a1", "webId", "gid", "id_token", "acw_tc", "websectiga"]
 

@@ -1,4 +1,4 @@
-import type { Author, ClientUser, ClonePayload, LoginStatus, LogItem, Note, SearchParams, SearchResult } from './types'
+import type { Author, ClientUser, ClientsAgg, ClonePayload, LoginStatus, LogItem, Note, SearchParams, SearchResult } from './types'
 
 const BASE = ''
 
@@ -75,6 +75,10 @@ export async function apiClientsList(feedId = '', intent = ''): Promise<{ total:
   if (intent) p.set('intent', intent)
   const q = p.toString()
   return j(await fetch(`${BASE}/api/clients_list${q ? `?${q}` : ''}`))
+}
+
+export async function apiClientsAgg(): Promise<ClientsAgg> {
+  return j(await fetch(`${BASE}/api/clients_agg`))
 }
 
 export async function apiClone(feedId: string): Promise<ClonePayload> {
