@@ -149,13 +149,15 @@ function exportClientsCsv() {
   URL.revokeObjectURL(a.href)
 }
 
-/** O1-3 去私信：入口占位（私信话术模块 S3 开发中，接通后跳话术视图） */
+/** O1-5 去联系：跳转用户主页，由用户自行沟通（工具不代写话术、不自动发送） */
 function goTalk(c: ClientUser) {
-  // 打开用户主页 + 提示（话术模块在 S3 接通）
   if (c.profile) window.open(c.profile, '_blank')
   // eslint-disable-next-line no-alert
-  alert('私信话术模块开发中（下一步接通）：将基于昵称/属地/意向/原评论生成话术，由你确认后发送。')
+  alert('已打开该用户主页。工具不提供话术、不代发私信：请自行沟通，注意平台私信限额与导流词红线（详见页顶「获客指引」）。')
 }
+
+/** O1-5 获客指引折叠态（风险提示） */
+const guideOpen = ref(true)
 
 function openProfile(p: string | null) {
   if (p) window.open(p, '_blank')
@@ -252,13 +254,37 @@ function openProfile(p: string | null) {
             <div class="info-item"><span class="k">线索总数</span><span class="v">{{ agg?.total ?? clSummary().total }}</span></div>
             <div class="info-item"><span class="k">高意向</span><span class="v" style="color:#FF2442">{{ clSummary().high }}</span></div>
             <div class="info-item"><span class="k">留联系方式命中</span><span class="v" style="color:#00A86B">{{ agg?.contact ?? clSummary().contact }}</span></div>
-            <div class="info-item"><span class="k">采集说明</span><span class="v small">高意向置顶，其余按互动足迹排序；「去私信」仅生成话术，发送由你确认</span></div>
+            <div class="info-item"><span class="k">采集说明</span><span class="v small">高意向置顶；「去联系」跳转用户主页，沟通与话术由你自行完成，工具不代写、不自动发送</span></div>
             <div style="margin-left:auto;display:flex;gap:8px">
               <button class="btn sm primary" @click="exportClientsCsv">导出线索 CSV</button>
             </div>
           </div>
-          <!-- O1-4 聚合区：意向分布 / 属地 TOP / 近 7 天产出 -->
-          <div v-if="agg" class="agg-grid">
+          <!-- O1-5 获客指引：怎么办 + 风险在哪（不做话术生成） -->
+          <div class="guide-card" :class="{ closed: !guideOpen }">
+            <div class="guide-head" @click="guideOpen = !guideOpen">
+              <span class="guide-title">🛡️ 获客指引（怎么办 + 风险在哪）</span>
+              <span class="guide-toggle">{{ guideOpen ? '收起 ▲' : '展开 ▼' }}</span>
+            </div>
+            <div v-if="guideOpen" class="guide-body">
+              <div class="guide-block">
+                <div class="guide-h">怎么办</div>
+                <ul class="guide-ul">
+                  <li>对方在评论区主动问需求 = 有对话基础，是优先触达对象</li>
+                  <li>建议先在其评论区回应引导，再考虑私信（<b>被动回复优先</b>，主动私信限制多、风险高）</li>
+                  <li>点「去联系」打开其主页，沟通内容由你自行组织</li>
+                </ul>
+              </div>
+              <div class="guide-block">
+                <div class="guide-h">风险在哪（平台规则，2026 现行）</div>
+                <ul class="guide-ul">
+                  <li><b>私信限额</b>：未认证号每日主动私信 ≤5 个陌生人，认证号 ≤20；10 分钟内 ≥10 条触发风控；未互关用户对方未回复前只能发 1 条</li>
+                  <li><b>导流词红线</b>：微信 / VX / 薇 / 溦 / 电话 / QQ / 邮箱 / 二维码（含谐音）一律禁止——2025-01 起平台要求商家交换联系方式只能走官方「私信获客工具」</li>
+                  <li><b>同文案重复发送</b>会被屏蔽；批量群发营销为平台打击对象</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          <!-- O1-4 聚合区：意向分布 / 属地 TOP / 近 7 天产出 -->          <div v-if="agg" class="agg-grid">
             <div class="agg-card">
               <div class="agg-title">意向分布</div>
               <div class="agg-dist">
@@ -309,7 +335,7 @@ function openProfile(p: string | null) {
                 <div class="cl-foot">足迹 {{ c.comment_count }} 次 · 关联 {{ c.note_count }} 篇 · 采集于 {{ (c.created_at || '').slice(0, 10) }}</div>
               </div>
               <div class="cl-act">
-                <button class="btn sm" @click="goTalk(c)">去私信</button>
+                <button class="btn sm" @click="goTalk(c)">去联系</button>
               </div>
             </div>
           </div>
@@ -550,6 +576,35 @@ function openProfile(p: string | null) {
 .cl-act {
   flex-shrink: 0;
 }
+/* ===== O1-5 获客指引卡片 ===== */
+.guide-card {
+  background: linear-gradient(135deg, #fff9f0, #fff3e0);
+  border: 1px solid #f0d9a8;
+  border-radius: 12px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.guide-card.closed .guide-body { display: none; }
+.guide-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: #8a5a1f;
+}
+.guide-toggle { font-size: 11px; color: #b08a4d; font-weight: 500; }
+.guide-body {
+  display: grid;
+  grid-template-columns: 1fr 1.6fr;
+  gap: 10px;
+  padding: 0 14px 12px;
+}
+.guide-block { font-size: 12px; }
+.guide-h { font-weight: 700; color: #8a5a1f; margin-bottom: 6px; }
+.guide-ul { margin: 0; padding-left: 16px; color: #5b4632; line-height: 1.7; }
 /* ===== O1-4 聚合区 ===== */
 .agg-grid {
   display: grid;
