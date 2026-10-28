@@ -16,17 +16,20 @@
 | 前端构建 | npm run build | ✅ 通过 | 产出 ../web/assets/index-CnNw2ilS.js / CRKb7nSt.css |
 | 脚本语法 | node --check | ✅ extract.js 通过 | 生产链路注入源 |
 
-## 二、圈复杂度超标清单（radon，C 级 >8）
+## 二、圈复杂度（radon，阈值 ≤8）
 
-| 文件 | 函数 | 复杂度 |
-|---|---|---|
-| server.py | `cdp_setup` | 15 |
-| server.py | `_read_cookie_status` | 11 |
-| server.py | `_enrich_notes` | 11 |
-| server.py | `notes` | 11 |
-| collect_pipeline.py | `get_feed_detail` | 15 |
+**已清零**（commit `b818b64`，2026-10-28 重构完成）：原 5 处超标全部拆分至 ≤8，server.py + collect_pipeline.py 现无任何 >8 函数。
 
-建议：拆分 `cdp_setup` 的「就绪探测→平台脚本拉起→轮询确认」三段；`get_feed_detail` 拆「详情补全 / 数据修正 / 互动回填」。**重构涉及 CDP 链路与浏览器交互，需平台恢复后实机验证，暂缓执行。**
+| 原函数 | 原复杂度 | 重构后 | 拆分出的 helper |
+|---|---|---|---|
+| `cdp_setup` | 15 | 3 | `_persist_and_read_cdp` / `_check_cdp_ready` / `_check_chrome_state` / `_launch_cdp_chrome` |
+| `_read_cookie_status` | 11 | 4 | `_parse_web_session` / `_web_session_value` / `_web_session_expires` / `_expires_ok` |
+| `_enrich_notes` | 11 | 主循环 | `_enrich_fast` / `_fill_fans` |
+| `notes` | 11 | 组装 | `_notes_query` / `_decorate_note` / `_attach_score_info` |
+| `get_feed_detail` | 15 | 8 | `_merge_detail_core` / `_merge_detail_interactions` |
+| `_cleanup_orphan_images`（顺手） | 10 | 拆分 | `_referenced_feed_ids` / `_keep_image` |
+
+验证：全量 144 测试通过（无失败）+ 后端重启冒烟（cdp_status/login_status 正常）。
 
 ## 三、本轮已修复
 
