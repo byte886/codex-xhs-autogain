@@ -191,13 +191,29 @@ tr:hover td{background:#FAFAFA}
 .set-hint code{background:#F4F4F5;border-radius:4px;padding:1px 5px;font-size:11px}
 .gate-msg{display:flex;align-items:center;gap:8px;background:var(--amber-soft);border:1px solid #FFE2B8;color:#B45409;border-radius:8px;padding:10px 12px;font-size:12px;margin-top:6px}
 .gate-msg.ok{background:var(--green-soft);border-color:#BFE8D0;color:var(--green)}
+/* ===== 设置页（v1.5 三卡收敛） ===== */
+.set-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+@media(max-width:1100px){.set-grid{grid-template-columns:1fr}}
+.set-card-h{font-size:13px;font-weight:700;margin-bottom:6px}
+/* ===== 质检卡（F9，渐进披露） ===== */
+.qc-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.qc-head{display:flex;justify-content:space-between;align-items:center;cursor:pointer;font-size:13px;font-weight:700;user-select:none}
+.qc-toggle{font-size:11px;color:var(--ink-3);font-weight:600}
+.qc-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+@media(max-width:900px){.qc-grid{grid-template-columns:1fr}}
+.qc-item{background:#FAFAFA;border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.qc-t{font-size:12px;font-weight:700;margin-bottom:6px}
+.qc-ok{font-size:12px;color:var(--green);font-weight:600;margin-bottom:4px}
+.qc-warn{font-size:12px;color:#B45409;font-weight:600;margin-bottom:4px}
+.qc-s{font-size:11.5px;color:var(--ink-2);line-height:1.6}
+.qc-sum{font-size:12px;color:var(--ink);background:var(--amber-soft);border:1px solid #FFE2B8;border-radius:8px;padding:10px 12px;margin-top:12px}
 </style>
 </head>
 <body>
 
 <div class="demo-bar">
   <span>O1 获客 AI 模块 · 交互原型（示例数据）</span>
-  <span class="right">codex-zhuke · v1.1 · 对齐视频形态</span>
+  <span class="right">codex-zhuke · v1.5 · 工作流 4-Tab（对齐同类产品模式）</span>
 </div>
 
 <div class="flow" id="flowBar"></div>
@@ -225,10 +241,10 @@ tr:hover td{background:#FAFAFA}
     <div class="grid" id="noteGrid"></div>
   </section>
 
-  <!-- ===== 视图：客户信息采集（评论区 + 意向分级） ===== -->
+  <!-- ===== 视图：客户（评论区线索 + 聚合 + 获客指引，v1.5 不做话术） ===== -->
   <section class="view" id="view-client">
-    <div class="page-title" id="clientTitle">客户信息采集 · 评论区意向线索</div>
-    <div class="page-desc">对齐视频形态：评论区全部列出，<b>高意向置顶</b>，其余按回复时间最新在前；每条含昵称 / 属地 / 评论 / 时间；命中需求词标出；每行「去私信」（仅生成话术与入口，发送由用户确认）。</div>
+    <div class="page-title">客户线索 · 评论区意向用户 + 数据聚合</div>
+    <div class="page-desc">对齐视频形态：评论区全部列出，<b>高意向置顶</b>，其余按回复时间最新在前；每条含昵称 / 属地 / 评论 / 时间；命中需求词标出；每行「去联系」跳转用户主页。<b>工具不做话术生成、不代发私信</b>——只让你知道客户在哪、风险在哪。</div>
     <div class="client-layout">
       <div class="client-left">
         <div class="stat-card">
@@ -243,10 +259,16 @@ tr:hover td{background:#FAFAFA}
           <div class="st-title">导出与触达</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn sm">导出线索 CSV</button>
-            <button class="btn sm">导出线索 Excel</button>
-            <button class="btn sm primary">去私信（N 人）</button>
+            <button class="btn sm primary">去联系（打开用户主页）</button>
           </div>
-          <div class="set-hint" style="margin-top:10px">私信触发前会列出<b>去重后的收件人 + 话术</b>，由你人工点「确认发送」。未互关用户只能发送一次；工具不会自动发送。</div>
+          <div class="set-hint" style="margin-top:10px">「去联系」= 打开该用户小红书主页，由你自行沟通。工具不提供话术、不自动发送；沟通内容请自行组织并注意下方风险提示。</div>
+        </div>
+        <div class="stat-card">
+          <div class="st-title">🛡️ 获客指引（怎么办 + 风险在哪）</div>
+          <div class="set-hint">
+            <b>怎么办：</b>对方主动评论问需求 = 有对话基础；建议先评论区回应再私信（被动回复优先）；<br>
+            <b>风险：</b>① 私信限额——未认证号每日主动私信 ≤5 个陌生人，认证号 ≤20，10 分钟内 ≥10 条触发风控，未互关用户未回复前只能发 1 条；② 导流词红线——微信/VX/薇/溦/电话/QQ/邮箱/二维码（含谐音）一律禁止，交换联系方式只能走官方「私信获客工具」；③ 同一话术反复使用会被屏蔽。
+          </div>
         </div>
       </div>
       <div class="client-list">
@@ -257,71 +279,33 @@ tr:hover td{background:#FAFAFA}
         <div id="clList"></div>
       </div>
     </div>
-  </section>
-
-  <!-- ===== 视图：数据聚合 ===== -->
-  <section class="view" id="view-agg">
-    <div class="page-title">数据聚合 · 客户线索总览</div>
-    <div class="page-desc">意向分布 = 档位计数（视频「意向分 高63 / 上47」即此形态）；属地辅助筛选；明细支持导出 CSV（昵称 / 主页链接 / 评论原文 / 命中词 / IP 属地）。</div>
-    <div class="agg-cards" id="aggCards"></div>
-    <div class="agg-two">
-      <div class="panel-card">
-        <div class="pc-title">意向分布</div>
-        <div class="intent-dist" id="aggIntent"></div>
+    <div style="margin-top:18px">
+      <div class="page-title" style="font-size:14px">数据聚合 · 线索总览</div>
+      <div class="agg-cards" id="aggCards"></div>
+      <div class="agg-two">
+        <div class="panel-card">
+          <div class="pc-title">意向分布</div>
+          <div class="intent-dist" id="aggIntent"></div>
+        </div>
+        <div class="panel-card">
+          <div class="pc-title">属地分布 TOP</div>
+          <div class="loc-bar" id="locBars"></div>
+        </div>
       </div>
-      <div class="panel-card">
-        <div class="pc-title">属地分布 TOP</div>
-        <div class="loc-bar" id="locBars"></div>
-      </div>
-    </div>
-    <div class="panel-card" style="margin-bottom:16px">
-      <div class="pc-title">近 7 天产出时间线</div>
-      <div class="timeline" id="timeline"></div>
-    </div>
-    <div class="tbl-wrap">
-      <table>
-        <thead><tr><th>昵称</th><th>属地</th><th>意向</th><th>命中词</th><th>来源笔记</th><th>评论原文</th><th>联系状态</th></tr></thead>
-        <tbody id="aggTbl"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- ===== 视图：私信话术 ===== -->
-  <section class="view" id="view-talk">
-    <div class="page-title">私信话术 · 模板免费 + AI 个性化（Key 门控）</div>
-    <div class="page-desc">默认模板不依赖 AI；AI 个性化话术基于用户信息（昵称 / 属地 / 意向 / 原评论）生成。生成结果与模板一样，由你确认后发送。</div>
-    <div class="talk-layout">
-      <div class="tpl-list" id="tplList"></div>
-      <div class="ai-gen">
-        <div class="ai-title">AI 个性化话术</div>
-        <div class="ai-desc">选择一位意向用户，AI 依据其评论生成开场话术（未配置 Key 时不可用）</div>
-        <div class="target-box" id="genTarget">
-          <span>目标：</span><b>未选择用户</b>
-        </div>
-        <div style="display:flex;gap:8px;margin-bottom:12px">
-          <select id="genUser" style="flex:1">
-            <option>高意向 · 宝宝有推荐的防晒面罩吗</option>
-            <option>高意向 · 私我价格（vx）</option>
-            <option>上意向 · 蜜贝你减了多久呀</option>
-          </select>
-          <button class="btn" id="genBtn">生成话术</button>
-        </div>
-        <div class="gen-out" id="genOut">点击「生成话术」→ AI 基于该用户评论生成个性化开场（演示）</div>
-        <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
-          <button class="btn" id="genCopy">复制话术</button>
-          <button class="btn primary" id="genSend">确认发送（1 人）</button>
-        </div>
-        <div class="gate-msg" id="genGate" style="margin-top:12px">⚠ 未配置 AI 模型：先在「AI 设置」中配置 API Key / Base URL / 模型后可用。</div>
+      <div class="panel-card" style="margin-bottom:16px">
+        <div class="pc-title">近 7 天产出时间线</div>
+        <div class="timeline" id="timeline"></div>
       </div>
     </div>
   </section>
 
-  <!-- ===== 视图：AI 设置 ===== -->
-  <section class="view" id="view-set">
-    <div class="page-title">AI 设置 · LLM Key 门控</div>
-    <div class="page-desc">OpenAI 兼容协议，覆盖 OpenAI / DeepSeek / 通义 / 中转站 / Claude 官方兼容层（api.anthropic.com/v1）。未配置时，克隆页 AI 工具条与 AI 话术全部灰态。</div>
-    <div class="set-wrap">
+  <!-- ===== 视图：设置（AI Key / CDP / 账号人设，v1.5 收敛） ===== -->
+  <section class="view" id="view-setup">
+    <div class="page-title">设置 · AI 模型 / CDP 连接 / 账号人设</div>
+    <div class="page-desc">三个配置项收敛到一页：AI Key 门控（文稿/质检共用）、CDP 连接（采集/克隆前置）、账号人设（AI 生成保持行业口吻）。未配置项按钮灰态并引导。</div>
+    <div class="set-grid">
       <div class="set-card">
+        <div class="set-card-h">AI 模型（Key 门控）</div>
         <div class="set-row">
           <label>API Key</label>
           <input id="setKey" placeholder="sk-…（已配置时留空 = 保留原 Key，不回传明文）">
@@ -334,26 +318,54 @@ tr:hover td{background:#FAFAFA}
           <label>默认模型</label>
           <input id="setModel" value="gpt-4o-mini" placeholder="模型名">
         </div>
-        <div class="set-hint">协议：标准 <code>chat/completions</code>；Claude 用 <code>https://api.anthropic.com/v1</code> + Claude key + 模型名；中转站填其 OpenAI 兼容地址。</div>
+        <div class="set-hint">协议：标准 <code>chat/completions</code>；Claude 用 <code>https://api.anthropic.com/v1</code>；中转站填其 OpenAI 兼容地址。未配置时，创作页 AI 工具条与质检灰态。</div>
         <div style="display:flex;gap:8px">
           <button class="btn" id="setTest">测试连接</button>
           <button class="btn primary" id="setSave">保存配置</button>
         </div>
-        <div class="gate-msg" id="setMsg">当前未配置 AI 模型 —— AI 功能（文稿生成 / 个性化话术）处于灰态。</div>
+        <div class="gate-msg" id="setMsg">当前未配置 AI 模型 —— AI 功能（文稿生成 / 发布前质检）处于灰态。</div>
+      </div>
+      <div class="set-card">
+        <div class="set-card-h">CDP 连接（Chrome 路径 / Profile）</div>
+        <div class="cdp-row"><span class="k">Chrome 路径</span><input type="text" value="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"><button class="btn sm">自动检测</button><button class="btn sm">浏览指定</button></div>
+        <div class="cdp-row"><span class="k">Profile</span><input type="text" value="Default（已登录小红书）" placeholder="如 Default / Profile 1"><button class="btn sm">检测</button></div>
+        <div class="cdp-row"><span class="k">调试端口</span><input type="text" value="9223（独立 Profile ~/.codex-xhs-profile）" disabled></div>
+        <div class="cdp-status"><span class="ok">✓ Chrome 已检测到 · Profile 已登录小红书 · 调试可用</span></div>
+        <div class="set-hint">生产环境：macOS / Windows 双脚本带参数启动 Chrome 打开配置页；未找到 Chrome 时 APP 提示并提供链接，配置好后采集/克隆按钮才可用。</div>
+        <div style="display:flex;gap:8px"><button class="btn primary">保存并验证</button><button class="btn">引导教程</button></div>
+      </div>
+      <div class="set-card">
+        <div class="set-card-h">账号人设（AI 生成口吻）</div>
+        <div class="set-row">
+          <label>行业 / 主营品类</label>
+          <input type="text" value="珠宝 · 翡翠 / 手串 / 陶瓷" placeholder="如：珠宝翡翠、护肤、餐饮…">
+        </div>
+        <div class="set-row">
+          <label>人设口吻</label>
+          <input type="text" value="干货型 · 第一人称 · 朴实可信" placeholder="如：干货型 / 分享型 / 探店型…">
+        </div>
+        <div class="set-row">
+          <label>常发主题</label>
+          <input type="text" value="翡翠挑选避坑 / 手串盘玩 / 玉器鉴别" placeholder="逗号分隔，如：避坑指南、性价比测评…">
+        </div>
+        <div class="set-hint">AI 生成标题/正文/标签时保持人设一致，避免"宝子们/家人们/谁懂啊"式通用 AI 味。</div>
+        <div style="display:flex;gap:8px"><button class="btn primary">保存人设</button></div>
       </div>
     </div>
   </section>
 
-  <!-- ===== 视图：克隆 AI 工具（F2 对齐，Key 门控） ===== -->
-  <section class="view" id="view-clone">
-    <div class="page-title">克隆 AI 工具 · 原笔记载荷 + AI 文稿门控</div>
-    <div class="page-desc">克隆卡片进入编辑页：左=原笔记参考，中=创作区（结果可继续编辑），右=AI 工具条。未配置 Key 时 AI 按钮灰态并提示「前往 AI 设置配置模型」；生成结果进编辑区后再走手动发布/存草稿。</div>
+</div>
+
+  <!-- ===== 视图：创作（克隆 AI 工具 + 发布前质检，v1.5） ===== -->
+  <section class="view" id="view-create">
+    <div class="page-title">创作 · 克隆编辑 + AI 文稿 + 发布前质检</div>
+    <div class="page-desc">克隆卡片进入编辑页：左=原笔记参考，中=创作区（结果可继续编辑），右=AI 工具条。未配置 Key 时 AI 按钮灰态并提示「前往设置配置模型」。发布前质检（违规词 / 结构 / 同质化预警）默认折叠，用到再展开——<b>参考≠克隆，创新表达 + 合规发布</b>。</div>
     <div class="clone-wrap">
       <div class="clone-panel"><h4>原笔记参考</h4><div style="font-size:12px;color:var(--ink-2);line-height:1.8">翡翠手镯怎么选？避坑 3 要点（原 2.5k 赞）<br><br>封面/正文结构：<br>· 痛点开场「买到假货才后悔」<br>· 3 条干货分点<br>· 结尾引导评论「你踩过坑吗」</div></div>
       <div class="clone-panel">
         <h4>创作区（结果可编辑）</h4>
         <div style="font-size:12px;border:1px solid var(--line);border-radius:8px;padding:10px;min-height:120px;color:var(--ink-2)">标题 / 正文编辑区 —— AI 生成结果落在这里，可继续人工修改，再走现有发布（发布永远手动）</div>
-        <div class="key-tip">⚠ 未配置 AI 模型：AI 按钮灰态。前往「AI 设置」配置 Key 后解锁。</div>
+        <div class="key-tip">⚠ 未配置 AI 模型：AI 按钮灰态。前往「设置」配置 Key 后解锁。</div>
       </div>
       <div class="clone-panel">
         <h4>AI 工具条</h4>
@@ -368,19 +380,37 @@ tr:hover td{background:#FAFAFA}
         <div class="ai-out" style="display:block;background:#F2F8F2;border-color:#00A86B;color:#2E5A3A"><b>示例输出</b>｜标题：<i>翡翠手镯挑选避坑 3 要点，小白必看</i><br>标签：#翡翠手镯 #玉镯挑选 #珠宝避坑 #手镯款式 #新手必看</div>
       </div>
     </div>
-  </section>
-
-  <!-- ===== 视图：CDP 配置（F8，生产自助） ===== -->
-  <section class="view" id="view-cdp">
-    <div class="page-title">CDP 配置 · Chrome 路径 / Profile 引导</div>
-    <div class="page-desc">生产环境（无 AI 窗口、只有 APP）用户自助配置 CDP。未配置时采集/克隆按钮灰态并引导；配置完成状态实时展示。默认按常见路径自动检测，失败弹文件对话框指定。</div>
-    <div class="cdp-card">
-      <div class="cdp-row"><span class="k">Chrome 路径</span><input type="text" value="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"><button class="btn sm">自动检测</button><button class="btn sm">浏览指定</button></div>
-      <div class="cdp-row"><span class="k">Profile</span><input type="text" value="Default（已登录小红书）" placeholder="如 Default / Profile 1"><button class="btn sm">检测</button></div>
-      <div class="cdp-row"><span class="k">调试端口</span><input type="text" value="9223（独立 Profile ~/.codex-xhs-profile）" disabled></div>
-      <div class="cdp-status"><span class="ok">✓ Chrome 已检测到 · Profile 已登录小红书 · 调试可用</span><br><span>生产脚本：macOS / Windows 双脚本带参数启动 Chrome 打开配置页（Python 参数化），未找到 Chrome 时 APP 提示并提供链接，配置好后按钮才可用。</span></div>
-      <div style="margin-top:12px;display:flex;gap:8px"><button class="btn primary">保存并验证</button><button class="btn">引导教程</button></div>
-      <div class="cdp-status warn" style="margin-top:14px;border-top:1px dashed var(--line);padding-top:10px">⚠ 未配置状态示意：Chrome 路径为空 / 检测失败时 → 「保存并验证」灰态，显示引导文案「未找到可用 Chrome，请按教程配置或手动指定路径」，采集/克隆按钮同步灰态；配置成功后按钮解锁。</div>
+    <!-- 发布前质检（F9，渐进披露：默认折叠） -->
+    <div class="qc-card" style="margin-top:16px">
+      <div class="qc-head" onclick="qcOpen=!qcOpen;document.getElementById('qcBody').style.display=qcOpen?'block':'none';this.querySelector('.qc-toggle').textContent=qcOpen?'收起 ▲':'展开 ▼'">
+        <span>✅ 发布前质检 · 违规词 / 结构 / 同质化预警（默认折叠，发布前自动跑）</span>
+        <span class="qc-toggle">展开 ▼</span>
+      </div>
+      <div id="qcBody" style="display:none;margin-top:12px">
+        <div class="qc-grid">
+          <div class="qc-item">
+            <div class="qc-t">① 违规词识别</div>
+            <div class="qc-ok">✓ 未发现绝对化用语 / 医疗承诺 / 导流词</div>
+            <div class="qc-s">标题与正文扫描通过（含"最""第一""全网唯一"等 32 词库 + 微信/VX/薇 等导流词，含谐音）。</div>
+          </div>
+          <div class="qc-item">
+            <div class="qc-t">② 结构检查</div>
+            <div class="qc-ok">✓ 标题前 12 字有效 · 正文 3 段式完整</div>
+            <div class="qc-s">痛点开场 → 干货分点 → 引导互动，与参考爆文结构一致（借鉴结构而非复制文字）。</div>
+          </div>
+          <div class="qc-item">
+            <div class="qc-t">③ 同质化预警（核心）</div>
+            <div class="qc-warn">⚠ 与参考爆文相似度 41%（阈值 45%），可发布但建议补充个人观点</div>
+            <div class="qc-s">平台 2026 原创审核升级：文本相似度比对识别洗稿——"稍微改几句话"仍判同质化。建议加入自身经验/真实体验再发布。</div>
+          </div>
+          <div class="qc-item">
+            <div class="qc-t">④ 图片二创提醒</div>
+            <div class="qc-warn">⚠ 封面未检测到二创痕迹（建议调色 / 裁剪 / 加字 / 重排）</div>
+            <div class="qc-s">克隆图片直接发布 = 搬运风险（单条降权 80%+下架）。建议二次编辑或补充实拍素材。</div>
+          </div>
+        </div>
+        <div class="qc-sum">质检结果：<b>2 项提示需处理</b>（同质化 41% / 图片未二创）。处理后可发布；同模板当日已发 1 篇（每日 ≤2）。</div>
+      </div>
     </div>
   </section>
 
@@ -421,15 +451,12 @@ const TPLS=[
  {n:"AI 个性化话术",free:false,desc:"Key 门控 · 基于用户评论/属地/意向生成",text:"（由 AI 依据选中用户生成）"},
 ];
 
-/* ===== 路由与流程条 ===== */
+/* ===== 路由与流程条（v1.5 工作流 4-Tab：采集 → 创作 → 客户 → 设置） ===== */
 const VIEWS=[
- {id:"collect",n:1,name:"笔记采集",desc:"关键词采集笔记（评分排序）"},
- {id:"client",n:2,name:"采集客户",desc:"评论区线索 + 意向分级"},
- {id:"agg",n:3,name:"数据聚合",desc:"线索 / 意向 / 属地 / 产出"},
- {id:"talk",n:4,name:"私信话术",desc:"模板 + AI 个性化（门控）"},
- {id:"clone",n:5,name:"克隆 AI 工具",desc:"原笔记载荷 + AI 文稿门控"},
- {id:"set",n:6,name:"AI 设置",desc:"Key / BaseURL / 模型门控"},
- {id:"cdp",n:7,name:"CDP 配置",desc:"Chrome 路径 / Profile 引导"},
+ {id:"collect",n:1,name:"采集",desc:"关键词采集笔记（评分排序）"},
+ {id:"create",n:2,name:"创作",desc:"克隆 + AI 文稿 + 发布前质检"},
+ {id:"client",n:3,name:"客户",desc:"线索 / 聚合 / 获客指引"},
+ {id:"setup",n:4,name:"设置",desc:"AI Key / CDP / 账号人设"},
 ];
 function renderFlow(cur){
   const bar=document.getElementById("flowBar");bar.innerHTML="";
@@ -463,7 +490,7 @@ function renderNotes(){
         </span></span>
       <div class="hover-bar">
         <button class="hbtn cust" onclick="collectClient(${i})">采集客户</button>
-        <button class="hbtn">克隆</button>
+        <button class="hbtn" onclick="show('create')">克隆</button>
         <button class="hbtn">打开原文</button>
       </div></div>
       <div class="meta"><div class="title">${n.t}</div>
@@ -475,7 +502,6 @@ function renderNotes(){
 let curFeed=0;
 function collectClient(i){
   curFeed=i;
-  document.getElementById("clientTitle").textContent="客户信息采集 · "+NOTES[i].t.slice(0,14)+"…";
   renderClient();show("client");
 }
 /* ===== 客户采集视图 ===== */
@@ -503,7 +529,7 @@ function renderClient(){
       <span class="tag ${INTENT_META[c.intent].cls}" style="margin-left:6px">${INTENT_META[c.intent].name}</span></div>
       <div class="cl-comment">${c.cmt}</div>
       <div class="cl-meta"><span>⏱ ${c.time}</span>${c.word!=="—"?`<span class="cl-word">命中：${c.word}</span>`:""}</div></div>
-      <div class="cl-action"><button class="btn sm" onclick="show('talk')">去私信</button></div>`;
+      <div class="cl-action"><button class="btn sm" onclick="alert('已打开该用户主页，由你自行沟通。工具不提供话术、不代发私信；注意私信限额与导流词红线（见左侧获客指引）。')">去联系</button></div>`;
     list.appendChild(item);
   });
 }
@@ -527,48 +553,25 @@ function renderAgg(){
     return `<tr><td>${r.n}</td><td>${r.loc}</td><td><span class="tag ${it}">${r.it}</span></td><td>${r.w}</td><td>${r.src}</td><td style="white-space:normal;max-width:260px">${r.cmt}</td><td>${r.st}</td></tr>`;
   }).join("");
 }
-/* ===== 话术视图 ===== */
-let selTpl=0;
-function renderTpl(){
-  const list=document.getElementById("tplList");list.innerHTML="";
-  TPLS.forEach((t,i)=>{
-    const el=document.createElement("div");el.className="tpl"+(i===selTpl?" sel":"");
-    el.innerHTML=`<div class="t-name">${t.n}${t.free?`<span class="t-free">免费</span>`:`<span class="tag gray">AI</span>`}</div>
-      <div class="t-desc">${t.desc}</div>
-      <div class="t-text">${t.text.replace(/\{(\w+)\}/g,'<span class="ph">{$1}</span>')}</div>`;
-    el.onclick=()=>{selTpl=i;renderTpl();};
-    list.appendChild(el);
-  });
-}
-let aiConfigured=false;
-function renderGen(){
-  const gate=document.getElementById("genGate");
-  if(aiConfigured){gate.className="gate-msg ok";gate.innerHTML="✅ 已配置 AI 模型 —— 个性化话术可用。";}
-  else{gate.className="gate-msg";gate.innerHTML="⚠ 未配置 AI 模型：先在「AI 设置」中配置 API Key / Base URL / 模型后可用。";}
-}
-document.getElementById("genBtn").onclick=()=>{
-  if(!aiConfigured){document.getElementById("genOut").className="gen-out";document.getElementById("genOut").textContent="未配置 AI 模型，无法生成（请先到「AI 设置」配置）。";return;}
-  const u=document.getElementById("genUser").value;
-  const out=document.getElementById("genOut");out.className="gen-out has";
-  out.textContent=`你好，看到你在评论区问「${u.split("·")[1]||"减重方法"}」～我也是做相关功课的，整理了详细的资料和思路，方便的话发你参考？顺便可以聊聊你的情况，帮你看看适不适合～`;
-};
-/* ===== AI 设置视图 ===== */
+/* ===== 话术视图（v1.5 已移除：不做话术生成） ===== */
+/* ===== 设置视图 ===== */
+let qcOpen=false;
 function renderSet(){
   const msg=document.getElementById("setMsg");
-  if(aiConfigured){msg.className="gate-msg ok";msg.innerHTML="✅ 已配置 AI 模型 —— 文稿生成 / 个性化话术可用（Key 已掩码保存）。";}
-  else{msg.className="gate-msg";msg.innerHTML="当前未配置 AI 模型 —— AI 功能（文稿生成 / 个性化话术）处于灰态。";}
+  if(aiConfigured){msg.className="gate-msg ok";msg.innerHTML="✅ 已配置 AI 模型 —— 文稿生成 / 发布前质检可用（Key 已掩码保存）。";}
+  else{msg.className="gate-msg";msg.innerHTML="当前未配置 AI 模型 —— AI 功能（文稿生成 / 发布前质检）处于灰态。";}
 }
 document.getElementById("setTest").onclick=()=>{
   document.getElementById("setMsg").className="gate-msg ok";
   document.getElementById("setMsg").innerHTML="✅ 连接成功 · 可用模型：gpt-4o-mini / deepseek-chat / claude-3-5-sonnet（示例）";
 };
 document.getElementById("setSave").onclick=()=>{
-  aiConfigured=true;renderSet();renderGen();
+  aiConfigured=true;renderSet();
   document.getElementById("setMsg").className="gate-msg ok";
   document.getElementById("setMsg").innerHTML="✅ 已保存（Key 留空则保留原 Key，不回传明文）。AI 功能已解锁。";
 };
 /* ===== 初始化 ===== */
-renderFlow("collect");renderNotes();renderClient();renderAgg();renderTpl();renderGen();renderSet();
+renderFlow("collect");renderNotes();renderClient();renderAgg();renderSet();
 
 </script>
 </body>
