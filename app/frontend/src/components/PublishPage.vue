@@ -17,6 +17,26 @@ const feedId = ref('')
 const publishing = ref(false)
 const loading = ref(false)
 
+// ---- 图片去重（URL 主路径去重）：克隆载荷/草稿/追加均经此过滤 ----
+// 重复来源：克隆提取时封面与正文同图、CDN 同图不同签名 query / 处理参数变体（!nd_dft 等）。
+// key 取 CDN 主路径（去 query、去末尾 ! 处理参数），相同即视为同一张图，保留首次出现。
+function imgKey(u: string): string {
+  const s = (u || '').trim()
+  if (!s) return ''
+  return s.split('?')[0].replace(/![^/]*$/, '')
+}
+
+function dedupe(list: string[]): string[] {
+  const seen = new Set<string>()
+  return (list || []).filter(u => {
+    const k = imgKey(u)
+    if (!k || seen.has(k)) return false
+    seen.add(k)
+    return true
+  })
+}
+
+
 // 草稿库（简约版：列表 / 恢复续编 / 删除）
 const drafts = ref<DraftItem[]>([])
 const draftPanelOpen = ref(false)
@@ -44,7 +64,7 @@ function restoreDraft(d: DraftItem) {
   body.value = d.desc || ''
   tags.value = d.tags.join(' ')
   visible.value = d.visibility || '公开可见'
-  images.value = [...d.images]
+  images.value = dedupe(d.images)
   feedId.value = d.feed_id || ''
   draftPanelOpen.value = false
   toast('已恢复草稿，可继续编辑后发布或重新保存')
@@ -66,22 +86,22 @@ async function openFor(note: CloneTarget) {
   feedId.value = note.feed_id || ''
   try {
     if ('images' in note && note.images) {
-      // 已有克隆载荷：直接填充
+      // 已有克隆载荷：直接填充（去重）
       title.value = note.title || ''
       body.value = note.desc || ''
-      images.value = note.images
+      images.value = dedupe(note.images)
     } else {
       // 秒开：先用列表已有数据（标题/正文/封面占位），后台拉克隆载荷补图，不阻塞编辑
       title.value = note.title || ''
       body.value = (note as Note).desc || ''
       const localCover = (note as Note).local_cover || (note as Note).local_images?.[0] || ''
-      images.value = localCover ? [coverProxy(localCover)] : []
+      images.value = dedupe(localCover ? [coverProxy(localCover)] : [])
       loading.value = false
       apiClone(note.feed_id)
         .then(p => {
           const locals = (p.images_local || []).filter(Boolean)
-          if (locals.length) images.value = locals
-          else if (p.images?.length) images.value = p.images
+          if (locals.length) images.value = dedupe(locals)
+          else if (p.images?.length) images.value = dedupe(p.images)
           if (p.title) title.value = p.title
           if (p.desc) body.value = p.desc
         })
@@ -148,8 +168,14 @@ async function onAddImages(ev: Event) {
   for (const f of files) {
     const r = await apiUploadImage(f).catch(() => ({ ok: false, note: '上传失败', path: undefined }))
     if (r.ok && r.path) {
-      images.value.push(r.path)
-      added++
+      // 追加时同样走主路径去重：重复图不再追加
+      const merged = dedupe([...images.value, r.path])
+      if (merged.length === images.value.length) {
+        toast('该图片已在列表中，未追加（重复）')
+      } else {
+        images.value = merged
+        added++
+      }
     } else {
       toast(`追加失败：${r.note || '未知原因'}`)
     }
@@ -220,7 +246,7 @@ async function publish() {
       title: title.value,
       desc: body.value,
       tags: tags.value.split(/[\s,，]+/).filter(Boolean).map(t => (t.startsWith('#') ? t : '#' + t)),
-      images: images.value,
+      images: dedupe(images.value),
       visible: visible.value
     })
     toast(rr.ok ? '发布成功' : `发布失败：${rr.note || '未知原因'}`)
@@ -237,7 +263,7 @@ async function saveDraft() {
       title: title.value,
       desc: body.value,
       tags: tags.value.split(/[\s,，]+/).filter(Boolean).map(t => (t.startsWith('#') ? t : '#' + t)),
-      images: images.value,
+      images: dedupe(images.value),
       visible: visible.value,
       feed_id: feedId.value
     })
