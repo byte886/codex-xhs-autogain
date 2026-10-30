@@ -22,6 +22,14 @@ export async function apiLicenseStatus(): Promise<{ ok: boolean; status: License
   return j(await fetch(`${BASE}/api/license_status`))
 }
 
+export async function apiLicenseActivate(key: string): Promise<{ ok: boolean; note?: string; status?: LicenseStatus }> {
+  return j(await fetch(`${BASE}/api/license_activate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  }))
+}
+
 export async function apiCollectStart(p: SearchParams): Promise<{ ok: boolean; task_id: string; keyword: string; limit: number }> {
   const body = {
     keyword: p.keyword, limit: p.limit, sort: p.sort, note_type: p.noteType,

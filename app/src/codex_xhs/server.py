@@ -709,6 +709,19 @@ async def license_status():
     return {"ok": True, "status": st}
 
 
+class LicenseActivateReq(BaseModel):
+    key: str
+
+
+@app.post("/api/license_activate")
+async def license_activate(req: LicenseActivateReq):
+    """激活：RSA 验签 + 机器码绑定 + 有效期；成功后写 license.json（activation 模式即放行）。"""
+    ok, reason = lic.activate(req.key)
+    if not ok:
+        raise HTTPException(400, reason)
+    return {"ok": True, "note": "激活成功（激活码与设备绑定）", "status": lic.license_status()}
+
+
 async def _require_login(account_id: str = "default"):
     """登录态熔断（每账号）：搜索/克隆/采集客户前检查登录态（30s 缓存，不反复连 Chrome）。
 

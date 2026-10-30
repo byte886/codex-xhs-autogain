@@ -6,17 +6,37 @@ import { refreshSysStatus, toast } from '../store'
 import {
   apiGetLLMConfig, apiSetLLMConfig, apiClearLLMConfig, apiTestLLM,
   apiCdpStatus, apiCdpSetup, apiCdpOpenInspect, apiCdpPickChrome,
-  apiLicenseStatus,
+  apiLicenseStatus, apiLicenseActivate,
 } from '../api'
 
 // ---- 授权状态（薄层：free 恒放行，展示模式/功能清单/指纹摘要） ----
-const lic = ref<{ mode: string; features: string[]; machine_fingerprint: string }>()
+const lic = ref<{ mode: string; features: string[]; machine_fingerprint: string; has_activation: boolean }>()
+const actKey = ref('')
+const actBusy = ref(false)
 async function loadLicense() {
   try {
     const r = await apiLicenseStatus()
     lic.value = r.status
   } catch {
     lic.value = undefined
+  }
+}
+async function activateLicense() {
+  if (!actKey.value.trim()) { toast('请输入激活码'); return }
+  actBusy.value = true
+  try {
+    const r = await apiLicenseActivate(actKey.value.trim())
+    if (r.ok) {
+      toast('激活成功（激活码与设备绑定）')
+      actKey.value = ''
+      await loadLicense()
+    } else {
+      toast(r.note || '激活失败')
+    }
+  } catch (e) {
+    toast(`激活失败：${(e as Error).message}`)
+  } finally {
+    actBusy.value = false
   }
 }
 
@@ -179,9 +199,18 @@ onMounted(async () => {
     <div class="page-desc">三个配置项收敛一页：AI Key 门控（文稿/质检共用）、CDP 连接（采集/克隆前置）、账号人设（AI 生成保持行业口吻）。未配置项按钮灰态并引导。</div>
 
     <div v-if="lic" class="lic-bar">
-      <span class="lic-tag">{{ lic.mode === 'free' ? '免费版' : lic.mode }}</span>
+      <span class="lic-tag" :class="{ on: lic.mode === 'activation' && lic.has_activation }">
+        {{ lic.mode === 'free' ? '免费版' : (lic.has_activation ? '激活版' : '未激活') }}
+      </span>
       <span>已开通功能：{{ lic.features.join(' / ') }}</span>
       <span class="lic-fp" :title="lic.machine_fingerprint">设备指纹：{{ lic.machine_fingerprint.slice(0, 12) }}…</span>
+      <span v-if="lic.has_activation && lic.mode !== 'free'" class="lic-ok">✓ 已激活（机器码绑定）</span>
+    </div>
+
+    <div v-if="lic && lic.mode !== 'free'" class="lic-bar lic-act">
+      <input v-model="actKey" placeholder="粘贴卖家提供的激活码" style="flex:1;min-width:240px" @keyup.enter="activateLicense" />
+      <button class="btn primary sm" :disabled="actBusy" @click="activateLicense">{{ actBusy ? '激活中…' : '激活' }}</button>
+      <span class="set-hint" style="margin:0">激活码由卖家按设备指纹签发，一台设备一个码</span>
     </div>
 
     <div class="set-grid">
@@ -254,7 +283,10 @@ onMounted(async () => {
 .set-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 @media (max-width: 1100px) { .set-grid { grid-template-columns: 1fr; } }
 .lic-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 9px 14px; margin-bottom: 14px; border: 1px solid #e6e6eb; border-radius: 8px; background: #fafafa; font-size: 13px; color: #444; }
+.lic-bar.lic-act { gap: 10px; }
 .lic-tag { padding: 2px 10px; border-radius: 999px; background: #e8f5e9; color: #2e7d32; font-weight: 600; }
+.lic-tag.on { background: #e3f2fd; color: #1565c0; }
+.lic-ok { color: #2e7d32; font-weight: 600; }
 .lic-fp { color: #888; font-family: monospace; font-size: 12px; }
 .set-card {
   background: var(--bg-card, #fff);

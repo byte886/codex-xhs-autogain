@@ -16,6 +16,7 @@ import os
 import platform
 import subprocess
 import sys
+import time
 
 from codex_xhs import config  # noqa: E402（DATA_DIR 相对项目根，可移植）
 
@@ -28,12 +29,25 @@ FEATURES = ("collect", "clone", "publish", "llm")
 _SCHEMA_VERSION = 1
 _LICENSE_FILE = config.DATA_DIR / "license.json"
 
+# 内置 RSA 公钥（activation 档位验签用；私钥在卖家端 data/license_private.pem，绝不入库）
+# 生成方式：python scripts/gen_license.py --genkey → 粘贴输出到此处
+_PUBLIC_KEY_PEM = """-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4XgmCPWD3xKVOL/wlMtA
+KFU0R/20WoY2KUapVd04xmahF6G/3glFH7Y+cXyCW7RsQBhzo0gkotqdyDGrEm/C
+PXW//h6ZIIvoVc/o16tEIkS7V8HHwh1gheSfgdFWK/BfMEiN1b6ib9uMTFDPbk/T
+9YD6H2tvzvMg103QFXKgi2gxZBnBQxpbLBXm8Dklhj3COf0zuNtlFOXb751LEhP/
+Akej4Rs88no56yfidtrd7YXcHTDwZ9aU9ENXIpyJqNqePg/xxGZL5aF9RFuYDt1+
+pfogq+TqY5BzJWr51pAs7vYQXg50GqA0dOQa5Xi35i8FS6xTuyUjqyZYifaSsEIZ
+OQIDAQAB
+-----END PUBLIC KEY-----
+"""
+
 
 def check_license(feature: str, detail: dict | None = None) -> tuple[bool, str, dict]:
     """统一权限问询。所有业务入口（启动/采集/克隆/发布/LLM/前端路由守卫）过此函数。
 
     free 模式恒 (True, "", {...})——调试/分享期零门槛、无感；
-    activation / server 由 _check_paid 承接（未来档位）。
+    activation 校验激活码（RSA 验签 + 机器码绑定 + 有效期）；server 档位预留。
     """
     if feature not in FEATURES:
         return False, f"未知功能：{feature}", {"mode": LICENSE_MODE}
@@ -43,20 +57,60 @@ def check_license(feature: str, detail: dict | None = None) -> tuple[bool, str, 
 
 
 def _check_paid(feature: str, detail: dict) -> tuple[bool, str, dict]:
-    """activation/server 占位实现：当前一律未授权（绝不破坏 free 路径）。
+    """activation：读 license.json 激活码，RSA 验签 + 机器码匹配 + 未过期 → 放行。
 
-    未来：
-    - activation：读 license.json 激活码 + machine_code() 绑定校验；
-    - server：读签名许可（signature 字段）→ 联网校验后放行。
+    server（未来）：读签名许可（signature 字段）→ 联网校验后放行；
+    两者共用同一公钥验签结构（license.json.signature 字段即为 server 预留）。
     """
     lic = load_license_file()
     if lic.get("signature"):
         return True, "", {"mode": "server", "feature": feature}
-    return (
-        False,
-        "未授权：请配置激活码或有效许可（当前 free 模式不受影响，设置 XHS_LICENSE_MODE=free 即可）",
-        {"mode": LICENSE_MODE, "feature": feature},
-    )
+    code = lic.get("activation_code") or ""
+    if not code:
+        return (
+            False,
+            "未激活：请在设置页输入激活码（或设置 XHS_LICENSE_MODE=free 保持免费试用）",
+            {"mode": LICENSE_MODE, "feature": feature},
+        )
+    ok, reason = _verify_activation_code(code)
+    if not ok:
+        return False, reason, {"mode": LICENSE_MODE, "feature": feature}
+    return True, "", {"mode": "activation", "feature": feature}
+
+
+def _verify_activation_code(code: str) -> tuple[bool, str]:
+    """验签激活码：blob.sig 格式，RSA 验签 + 机器码匹配 + 有效期。
+
+    blob = base64url(JSON{"m": machine_code, "e": exp_ts})，sig = RSA-SHA256(blob)。
+    """
+    import base64
+
+    try:
+        blob_b64, sig_b64 = code.strip().split(".", 1)
+        blob = base64.urlsafe_b64decode(blob_b64 + "=" * (-len(blob_b64) % 4))
+        sig = base64.urlsafe_b64decode(sig_b64 + "=" * (-len(sig_b64) % 4))
+        payload = json.loads(blob.decode("utf-8"))
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return False, "激活码格式错误"
+    if not isinstance(payload, dict) or "m" not in payload or "e" not in payload:
+        return False, "激活码格式错误"
+    # RSA 验签（PKCS1v15-SHA256）
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+    try:
+        pub = load_pem_public_key(_PUBLIC_KEY_PEM.encode("ascii"))
+        # 签发侧签的是 base64url 字符串（blob.encode("ascii")），验签必须用同一对象
+        pub.verify(sig, blob_b64.encode("ascii"), padding.PKCS1v15(), hashes.SHA256())
+    except Exception:  # noqa: BLE001（任何验签失败 = 激活码无效）
+        return False, "激活码无效（签名不匹配）"
+    if payload.get("m") != machine_code():
+        return False, "激活码与设备不匹配（激活码绑定机器码）"
+    exp = payload.get("e")
+    if not isinstance(exp, (int, float)) or exp < time.time():
+        return False, "激活码已过期"
+    return True, ""
 
 
 def machine_code() -> str:
@@ -118,6 +172,35 @@ def load_license_file() -> dict:
     return defaults
 
 
+def activate(code: str) -> tuple[bool, str]:
+    """激活（前端调用）：RSA 验签通过后把激活码持久化到 license.json。
+
+    成功后 check_license 在 activation 模式即放行；验证失败不落盘。
+    """
+    code = (code or "").strip()
+    ok, reason = _verify_activation_code(code)
+    if not ok:
+        return False, reason
+    try:
+        _LICENSE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _LICENSE_FILE.write_text(
+            json.dumps(
+                {
+                    "schema_version": _SCHEMA_VERSION,
+                    "mode": "activation",
+                    "activation_code": code,
+                    "activated_at": int(time.time()),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except OSError as e:  # 落盘失败（如只读目录）
+        return False, f"激活写入失败：{e}"
+    return True, ""
+
+
 def license_status() -> dict:
     """给前端展示用的授权状态（不暴露 machine_code 明文——仅返回摘要指纹）。"""
     lic = load_license_file()
@@ -125,7 +208,8 @@ def license_status() -> dict:
         "mode": LICENSE_MODE,
         "schema_version": lic.get("schema_version", _SCHEMA_VERSION),
         "features": lic.get("features", list(FEATURES)),
-        "machine_fingerprint": lic.get("machine_code", ""),  # 已是 SHA-256 摘要，可安全展示
+        "machine_fingerprint": lic.get("machine_code") or machine_code(),  # 已是 SHA-256 摘要，可安全展示
         "has_signature": bool(lic.get("signature")),
+        "has_activation": bool(lic.get("activation_code")),  # activation 模式是否已激活
         "activated_at": lic.get("activated_at"),
     }

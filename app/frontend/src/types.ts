@@ -134,5 +134,6 @@ export interface LicenseStatus {
   features: string[]
   machine_fingerprint: string
   has_signature: boolean
+  has_activation: boolean
   activated_at: string | null
 }
