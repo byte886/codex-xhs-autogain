@@ -43,11 +43,13 @@ def _parse_likes(s: str) -> int:
     return int(v)
 
 
-async def search_via_browser(keyword: str, limit: int = 20, on_progress=None, should_stop=None, filters: dict | None = None) -> dict:
-    """本地浏览器搜索（Playwright 复用 Chrome 连接，DOM 层提取卡片）。
+async def search_via_browser(keyword: str, limit: int = 20, on_progress=None, should_stop=None,
+                             filters: dict | None = None, account_id: str = "default") -> dict:
+    """本地浏览器搜索（Playwright 复用账号引擎连接，DOM 层提取卡片）。
 
     任务式采集：支持进度回调 on_progress(n) 与中途停止 should_stop()。
     filters：搜索筛选（排序/笔记类型/发布时间/搜索范围/位置距离），透传浏览器应用。
+    account_id：使用哪个账号引擎采集（默认 default；多账户下采集号/发布号分离）。
     返回 {"items": notes 列表, "stopped": bool}。
     """
     from codex_xhs import browser_client
@@ -57,6 +59,7 @@ async def search_via_browser(keyword: str, limit: int = 20, on_progress=None, sh
         on_progress=on_progress,
         should_stop=should_stop,
         filters=filters,
+        account_id=account_id,
     )
     items = data.get("items", [])[:limit]
     notes = []
@@ -86,27 +89,29 @@ async def search_via_browser(keyword: str, limit: int = 20, on_progress=None, sh
     return {"items": notes, "stopped": data.get("stopped", False)}
 
 
-async def _run_browser(cmd: str, arg: str, tag: str, arg2: str = "") -> dict | None:
-    """经常驻 Playwright 连接调浏览器执行（note/user），复用连接不弹窗。失败返回 None。"""
+async def _run_browser(cmd: str, arg: str, tag: str, arg2: str = "", account_id: str = "default") -> dict | None:
+    """经常驻账号引擎连接调浏览器执行（note/user），复用连接不弹窗。失败返回 None。"""
     from codex_xhs import browser_client
 
     try:
         if cmd == "note":
-            return (await browser_client.note(arg, arg2)) or None
+            return (await browser_client.note(arg, arg2, account_id=account_id)) or None
         if cmd == "user":
-            return (await browser_client.user(arg)) or None
+            return (await browser_client.user(arg, account_id=account_id)) or None
         return None
     except Exception:  # noqa: BLE001
         return None
 
 
-async def get_feed_detail(note: dict) -> dict:
+async def get_feed_detail(note: dict, account_id: str = "default") -> dict:
     """补全笔记详情（本地浏览器打开笔记页 DOM+SSR 提取标题/正文/作者/日期/图片/互动数据）。
 
     互动数据（赞/藏/评/转/发布时间/作者 uid）来自页面 SSR 注入的 __INITIAL_STATE__
     （无需签名接口，比 DOM 抓取更可靠）。图片仍走 DOM 轮播图选择器。
+    account_id：使用哪个账号引擎（默认 default；多账户下采集号/发布号分离）。
     """
-    d = await _run_browser("note", note.get("feed_id", ""), "NOTE", note.get("xsec_token", ""))
+    d = await _run_browser("note", note.get("feed_id", ""), "NOTE",
+                           note.get("xsec_token", ""), account_id)
     if d:
         _merge_detail_core(note, d)
         _merge_detail_interactions(note, d)
@@ -114,12 +119,12 @@ async def get_feed_detail(note: dict) -> dict:
     return note
 
 
-async def get_note_detail_by_url(url: str) -> dict:
+async def get_note_detail_by_url(url: str, account_id: str = "default") -> dict:
     """数据回流：按完整笔记链接抓取详情（已发布笔记）。返回提取原始 dict，未 merge。"""
     from codex_xhs import browser_client
 
     try:
-        d = await browser_client.note_url(url)
+        d = await browser_client.note_url(url, account_id=account_id)
     except Exception:  # noqa: BLE001
         return {}
     time.sleep(REQUEST_INTERVAL[0] + random.random() * (REQUEST_INTERVAL[1] - REQUEST_INTERVAL[0]))
@@ -175,15 +180,16 @@ def _parse_fans(text: str) -> int:
     return int(v * 10000 if m.group(2) else v)
 
 
-async def get_user_profile(note: dict, cache: dict) -> dict:
-    """拿作者粉丝数（本地浏览器打开作者主页 DOM 提取；按 user_id 缓存）。"""
+async def get_user_profile(note: dict, cache: dict, account_id: str = "default") -> dict:
+    """拿作者粉丝数（本地浏览器打开作者主页 DOM 提取；按 user_id 缓存）。
+    account_id：使用哪个账号引擎（默认 default）。"""
     uid = note.get("user_id")
     if not uid:
         return note
     if uid in cache:
         note["fans_count"] = cache[uid]
         return note
-    u = await _run_browser("user", uid, "USER")
+    u = await _run_browser("user", uid, "USER", "", account_id)
     fans = 0
     if u:
         fans = _parse_fans(u.get("fans") or "")

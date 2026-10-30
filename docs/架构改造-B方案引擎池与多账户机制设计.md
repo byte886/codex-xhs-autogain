@@ -1,0 +1,266 @@
+# 架构改造：B 方案引擎池 + 多账户机制（设计文档）
+
+> 状态：设计定稿，实施中
+> 日期：2026-10-29
+> 关联：`docs/方案A-Cookie续期-钥匙串授权调研与落地.md`（历史决策，B 方案取代其主链路）
+
+---
+
+## 一、背景与目标
+
+### 1.1 现状痛点（用户连续多轮确认）
+
+| 痛点 | 根因 |
+|---|---|
+| ① 用户每次要带 CDP 参数才能跑 | `browser_client.py` 用 `Popen --remote-debugging-port` + `connect_over_cdp`，Chrome 144+ 每次外部 TCP 连接必弹「要允许远程调试吗？」，依赖 press_allow 代点，且用户机器要配辅助功能权限 |
+| ② Mac 需配钥匙串开关才能解 Chrome Cookie | 方案 A 直读 Chrome Cookie 库需钥匙串「始终允许」授权（macOS 禁合成点击，只能人工一次） |
+| ③ 单账户单引擎，无法采集号/发布号分离 | `_browser` 全局单例 + 单份 `cookies.json` |
+| ④ 无日志体系 | 全部 `print`，多账号后无法排障 |
+| ⑤ 端口硬编码 | 8791（前端保留页判断）/ 9223（pkill 清理）写死 |
+
+### 1.2 B 方案（已 PoC 五验证点全通过）
+
+**Playwright `launch_persistent_context(channel='chrome', user_data_dir=...)`**：
+
+- **无授权弹窗**：Playwright 用内部 stdio 管道（`--remote-debugging-pipe`）连接，不暴露 TCP 端口、不算外部连接，从机制上不触发「允许远程调试」授权流程（PoC 验证点 1：ps 无 `--remote-debugging-port`、全程无 press_allow）✅
+- **免钥匙串**：解密发生在浏览器进程内部（它是加密存储创建者自动有权），通道路径与方案 A 完全不同（PoC 验证点 3 对照实验：本机 Keychain 零「Chromium Safe Storage」授权态下 CDP 取 Cookie 14 条成功）✅
+- **脚本控制 / 网络监听 / CDP 调试**：Playwright 全保留（验证点 2/4/5）✅
+- **登录态持久化**：正常 `ctx.close()` 落盘（`pkill -9` 会丢，已实证）✅
+
+### 1.3 目标
+
+1. 引擎从「单例」→「多账户引擎池」（每账号 = 一个独立 user-data-dir = 一个独立登录态）
+2. 统一配置中心、统一日志审计、每账号风控状态机、优雅生命周期、任务标准化、数据层带账号维度
+3. 生产形态（pywebview 壳 + 后台引擎）与调试形态（可见引擎）共用同一套机制
+4. 兼容现有前端与 API（默认账号语义，前端无感）
+
+---
+
+## 二、架构总览
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ 前端 Vue3（127.0.0.1:<动态端口>，相对路径 /api/...）       │
+└──────────────┬──────────────────────────────────────────┘
+               │ HTTP
+┌──────────────▼──────────────────────────────────────────┐
+│ server.py（FastAPI，39 路由适配 account_id）               │
+│  登录校验 → 任务路由 → 数据层（SQLite 带 account_id）        │
+└──────────────┬──────────────────────────────────────────┘
+               │ 调用
+┌──────────────▼──────────────────────────────────────────┐
+│ engine_pool.py（新：多账户引擎池）                         │
+│  ┌───────────────────────────────────────────────────┐   │
+│  │ AccountEngine（每账号一个实例）                      │   │
+│  │  context = launch_persistent_context(user_data_dir)│   │
+│  │  生命周期：懒启动 / 优雅关闭 / 自愈重启               │   │
+│  │  风控状态机：正常 → 熔断 → 冷却 → 人工介入            │   │
+│  └───────────────────────────────────────────────────┘   │
+│  （账号 A：采集号  ← user_data_dir=~/.codex-xhs/accounts/A）│
+│  （账号 B：发布号  ← user_data_dir=~/.codex-xhs/accounts/B）│
+└───────┬──────────────┬──────────────────┬───────────────┘
+        │              │                  │
+┌───────▼──────┐ ┌─────▼───────┐  ┌──────▼──────────────┐
+│ config.py   │ │ logger.py   │  │ risk.py             │
+│ 统一配置中心 │ │ 日志+审计+脱敏 │  │ 风控状态机（每账号）   │
+└─────────────┘ └─────────────┘  └─────────────────────┘
+```
+
+**核心不变式**：业务代码（collect_pipeline / server）只通过 engine_pool 的**账号路由函数**碰浏览器；登录态、Cookie、风控状态全部按账号隔离。
+
+---
+
+## 三、各机制设计
+
+### 3.1 多账户引擎池（engine_pool.py，重写 browser_client 的引擎层）
+
+**账号注册表** `data/accounts.json`：
+
+```json
+{
+  "accounts": {
+    "default": {
+      "role": "collect",
+      "user_data_dir": "~/.codex-xhs/accounts/default",
+      "status": "ok",
+      "cookie_expires_at": null,
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  },
+  "active": "default"
+}
+```
+
+字段：
+- `account_id`：稳定标识（`default` / `collect_a` / `publish_b`）
+- `role`：`collect`（采集号）/ `publish`（发布号）/ `mixed`（通用，默认）
+- `user_data_dir`：`~` 相对可移植
+- `status`：`ok` / `cooldown`（冷却中，含 until）/ `manual`（需人工介入）
+- `cookie_expires_at`：web_session 到期时间（约 7 天，到期提醒刷新）
+
+**引擎管理**：
+- `get_engine(account_id="default")`：懒启动；`asyncio.Lock` 保护；连接失败冷却重试
+- `close_engine(account_id)` / `close_all()`：`ctx.close()` 优雅落盘（绝不用 pkill -9）
+- 自愈：上下文断开（`is_connected()==False`）→ 自动重建
+- 退出钩子：FastAPI shutdown 事件 → `close_all()`
+- **保底空白页**：保留现有 `_close_page_safe` 逻辑（最后一个页面先补 about:blank）
+
+**操作路由**（保持函数签名兼容，新增可选 `account_id`）：
+
+```python
+async def search(keyword, limit, on_progress=None, should_stop=None, filters=None, account_id="default")
+async def note(note_id, xsec_token="", wait_ms=5000, account_id="default")
+async def user(uid, wait_ms=5000, account_id="default")
+async def clients(note_id, xsec_token="", account_id="default")
+...
+```
+
+默认 `account_id="default"` → **现有 server 代码零改动**；多账号时前端/后端显式传账号。
+
+**登录态**：每账号 Cookie 存 `<user_data_dir>/../cookies/<account_id>.json`（或 data/cookies/<account_id>.json），不再单份 `data/cookies.json`。
+
+### 3.2 统一配置中心（config.py）
+
+- 新增 `data/config.json`（引擎端口 / 账号 / 行为参数）
+- 保留旧文件（cdp_config.json / llm_config.json / persona.json）通过 config 统一入口读写，**不迁移数据文件**（避免破坏现有用户数据）
+- 读取优先级：环境变量 > config.json > 默认值
+- 路径一律 `~` 相对（沿用 `_home_relative` 模式）
+- **动态端口**：引擎端口不再写死 9223；生产壳启动时探测 8800-8899 空闲端口（或绑定 0），日志输出实际端口；`XHS_PROFILE_PORT` 环境变量仍可强制指定
+- 前端保留页判断：`cleanup_tabs()` 从 config 读当前前端端口，不再硬编码 8791
+
+### 3.3 统一日志 + 审计 + 脱敏（logger.py）
+
+- 标准 `logging`：`data/logs/app.log`（RotatingFileHandler，5MB×5）+ 控制台
+- 按模块 logger：`codex_xhs.engine` / `codex_xhs.server` / `codex_xhs.risk`
+- **审计**：账号级操作留痕（登录/导入Cookie/采集/克隆/发布/草稿），含 account_id + 动作 + 结果 + 耗时
+- **脱敏**：Cookie 值、web_session、api_key 一律 `***`；日志绝不输出 Cookie 明文（新增 `redact()` 工具，所有 Cookie 打印点必须过它）
+
+### 3.4 引擎生命周期管理
+
+| 场景 | 行为 |
+|---|---|
+| 后端启动 | 不预启引擎（懒加载），清理残留 tab |
+| 后端关闭 | `close_all()`：先 `ctx.close()` 落盘登录态，再停 Playwright |
+| 引擎崩溃/断开 | `is_connected()==False` → 自动重建（带冷却防抖） |
+| 任务结束 | 保留引擎常驻（避免反复开关被风控）；页面清理走 `cleanup_tabs()` |
+| 一次性动作（Cookie 校验） | 用后 `close_engine()` 优雅关闭（替代原 `stop_profile` 的 pkill -9） |
+
+### 3.5 风控状态机（risk.py，每账号）
+
+状态迁移：
+
+```
+ok ──(登录墙/验证码/限流检测)──► cooldown（熔断，until=now+N）
+ok ──(采集频率超闸)──────────► throttle（仅该账号拒绝新任务，N 秒）
+cooldown ──(人工确认/到期)────► ok
+任何状态 ──(Cookie 失效)──────► manual（需扫码/导 Cookie，界面引导）
+```
+
+- 信号源：`_detect_login_wall`（登录墙/验证码文本）、采集 429/异常、发布护栏（已有 24h 熔断并入）
+- **每账号独立**：A 号风控不影响 B 号
+- 采集节流 `_check_collect_throttle` 从全局改为每账号
+- **操作节奏**：现有 `human_delay` / `REQUEST_INTERVAL` 保留并下沉到引擎层（每账号同配置，避免出现「秒级反复开关 Chrome」）
+
+### 3.6 任务机制标准化
+
+- `_COLLECT_TASKS` 内存态保留（任务生命周期短），但状态加 `account_id` + `started_at` + 结果摘要
+- 任务 → 引擎路由：采集任务默认走 `role=collect` 的账号（未配置则 default）
+- 进度/取消 API 不变（兼容前端），响应增加 account_id
+- 断点续采（本轮不做：采集是即时任务，采完即弃，符合产品语义；记录到待办）
+
+### 3.7 数据层统一（SQLite 带账号维度）
+
+- `notes` / `publish_logs` / `clients` / `drafts` 增加 `account_id TEXT DEFAULT 'default'` 列（幂等 ALTER）
+- 写入时记当前账号；查询默认全账号（兼容），可选按账号过滤
+- 搜索数据「用完即弃」原则不变（notes 仍按批次 DELETE 重写；草稿/发布记录长期保留）
+
+### 3.8 跨平台 Chrome 发现
+
+- **已验证**：`chrome_executable()` 已有 macOS（/Applications + ~/Applications）与 Windows（注册表 App Paths + 常见路径）实现，`cookie_reader` 有 Windows DPAPI 分支（结构就位待实测）
+- 本轮：补单测 + 补 Linux 兜底（罕见，仅文档标注）；生产壳首次启动引导（找不到 Chrome → 前端提示 + 文件选择器）后续随 UI 做
+
+---
+
+## 四、兼容策略
+
+1. **默认账号**：所有 API 不传 `account_id` 时走 `default`，现有前端/测试零改动
+2. **数据不迁移**：`default` 账号继续用现有 `data/cookies.json` 与现有 SQLite 数据（兼容老库）
+3. **环境变量向后兼容**：`XHS_BROWSER_MODE` / `XHS_PROFILE_PORT` / `XHS_PROFILE_DIR` 仍生效（映射到 default 账号）
+4. **模块兼容**：`browser_client.py` 对外函数签名不变（加可选参数），`collect_pipeline` 零改动
+5. **测试约定**：UI 自动化测试用独立空白 profile（不碰日常账号）；低频搜索词
+
+---
+
+## 五、实施阶段
+
+| 阶段 | 内容 | 验收 |
+|---|---|---|
+| P1（本轮） | config.py + logger.py + engine_pool 重构 + 生命周期 + 风控状态机 | 现有 E1 测试全绿；多账号引擎可分别启动/关闭；日志有审计无明文 Cookie |
+| P2（本轮） | server.py 适配（account_id 透传 + 每账号节流 + shutdown 钩子）+ 数据层 ALTER | /api/collect_start 带账号；notes 表带 account_id |
+| P3（后续） | pywebview 壳 + 动态端口 + 账号管理 UI（1 采集 + 1 发布） | 独立 App 窗口；账号页增删/扫码/状态 |
+| P4（后续） | 跨平台装机引导（Chrome 发现 + 一键配置） | Windows 实测 |
+
+---
+
+## 六、风险与护栏
+
+| 风险 | 对策 |
+|---|---|
+| 多账号同机指纹关联 | 支持机制但使用上错峰（采集/发布不同时段）；文档提示 |
+| 优雅关闭遗漏丢登录态 | shutdown 钩子 + 任务 finally 兜底 `close_engine`；禁止 pkill -9 路径 |
+| 改造破坏现有功能 | 默认账号语义 + 现有 E1 六场景回归；成功前不推送 |
+| 日志泄密 | 所有 Cookie/Key 打印点强制 `redact()`；code review 关卡 |
+
+---
+
+## 七、验收标准（可执行）
+
+- [ ] `uvicorn` 启动无报错，日志落 `data/logs/app.log`
+- [ ] `browser_client.search()` 默认账号行为与改造前一致（E1 s1/s3 回归）
+- [ ] 两个账号（default + test_a）可分别启动引擎、互不干扰
+- [ ] 关闭后端进程 → 引擎优雅关闭 → 重启后登录态保留（免重扫）
+- [ ] 日志中无 Cookie 明文（grep web_session 值不到）
+- [ ] `cleanup_tabs` 不再硬编码 8791；pkill 路径移除
+- [ ] 风控熔断只影响触发账号
+
+---
+
+## 八、三现象机制（操作观感 + 风控恢复）——2026-10-29 补充
+
+用户实测观察到的三个负面现象，机制层一并解决：
+
+### 现象 1：反复开关小红书页面（观感非人 → 易触发风控）
+
+| 根因 | 机制对策（已落地） |
+|---|---|
+| 任务级反复启停 Chrome 进程（窗口开-关-开） | 引擎常驻：进程级启停仅发生在后端 shutdown / 用户退出 APP；任务结束不再关闭引擎 |
+| 每个任务新建 tab 用完即关（反复开关 tab） | `AccountEngine._task_page` 任务 tab 复用：同账号后续任务同 tab 导航覆盖，不新建不关闭；非任务页（校验页等）才关闭 |
+| Chrome 关最后一个页整窗退出 | `close_page_safe` 保底空白页兜底（既有） |
+| 校验路径反复清空/注入 Cookie | `verify_cookies` 默认 headless 判定（不碰引擎）；引擎回退仅兜底 |
+
+### 现象 2：搜索等动作反复执行（重复操作被平台判异常）
+
+| 根因 | 机制对策（已落地） |
+|---|---|
+| 同关键词任务重复提交 | `collect_start` 任务唯一键 `keyword|account_id` + 60s 窗口去重 → 409 提示 |
+| 失败任务空转重试 | 任务状态机 error 即停；软风控走恢复闭环（见现象 3），不自动重复执行 |
+| 平台任务频率失控 | 每账号节流 90s（`risk.check_throttle`）+ 拟人请求间隔 1-1.8s + 滚动采集 stale 终止（既有） |
+
+### 现象 3：遇风控就停死等用户（实际多为临时频率异常，扫码/验证即可恢复）
+
+| 旧行为（问题） | 新机制（已落地） |
+|---|---|
+| 登录墙/验证码一律 `mark_risk` 24h 熔断死等 | 软/硬分级：验证码/扫码/登录墙 → `mark_manual`（不死等）；明确封禁 → `mark_hard` 24h |
+| 风控后无自动恢复 | 恢复闭环：`refresh_cookie_from_chrome` 读引擎内存 Cookie（CDP）→ 校验 → 落盘 → **自动 `resolve` 解锁**；`login_status` 纸面有效同样自动解锁 |
+| 连续临时风控无节奏控制 | `mark_soft` 指数退避：1→2→4→8→16 分钟封顶 30 分钟，冷却到期自动回 ok，不要求人工 |
+| 前端无引导 | 拦截文案明确「页面已打开登录入口，请扫码或完成验证，恢复后自动解除」；登录页保留供扫码 |
+
+**闭环时序（软风控）**：
+采集遇验证码 → `mark_manual` + 任务 error（页面保留）→ 前端提示扫码 → 用户扫码/验证 → `refresh_cookie_from_chrome` / `login_status` 检测有效 → `risk.resolve` 自动解锁 → 用户重试采集即继续。
+
+### 验收补充（现象三机制）
+- [ ] 同关键词 60s 内重复 `collect_start` → 409
+- [ ] 连续 3 次 `mark_soft` → 冷却 4 分钟（指数退避），非 24h
+- [ ] `mark_manual` 后扫码成功 → `refresh_cookie_from_chrome` 返回 ok 且 `risk.state` 回 ok
+- [ ] 任务结束引擎窗口保留（不反复开关）；`cleanup_tabs` 仅清理非 APP/空白页

@@ -49,25 +49,25 @@ from codex_xhs.collect_pipeline import (  # noqa: E402
     search_via_browser,
 )
 from codex_xhs import browser_client  # noqa: E402（快速档 _enrich_notes 直连详情/主页）
+from codex_xhs import config, risk  # noqa: E402（架构改造 P1：配置中心 + 每账号风控）
 
 app = FastAPI(title="Codex 自动获客 · 本地工具")
 
 # ---- 拟人频率保护（平台风控：操作过频触发临时行为控制，需限流）----
-_COLLECT_MIN_INTERVAL = 90.0        # 两次平台采集/搜索任务的最小间隔（秒）
-_last_collect_end_at = [0.0]        # 最近一次平台任务结束时间（含停止/失败），列表引用以在闭包中改写
+# 架构改造 P1：全局节流 → risk 每账号节流（见 _check_collect_throttle / _mark_collect_done）
 
 
-def _check_collect_throttle() -> None:
-    """采集/搜索前的频率闸：距上次平台任务结束不足阈值时拒绝，避免被风控标记异常行为。"""
-    elapsed = time.time() - _last_collect_end_at[0]
-    if elapsed < _COLLECT_MIN_INTERVAL:
-        wait = int(_COLLECT_MIN_INTERVAL - elapsed) + 1
-        raise HTTPException(400, f"操作过于频繁，请 {wait} 秒后再试（拟人频率保护）")
+def _check_collect_throttle(account_id: str = "default") -> None:
+    """采集/搜索前的频率闸（每账号，替代旧全局节流）：超闸抛 400。"""
+    try:
+        risk.check_throttle(account_id or "default")
+    except risk.BlockedError as e:
+        raise HTTPException(400, e.reason) from e
 
 
-def _mark_collect_done() -> None:
+def _mark_collect_done(account_id: str = "default") -> None:
     """平台任务结束（成功/停止/失败）统一记录结束时间，供节流闸使用。"""
-    _last_collect_end_at[0] = time.time()
+    risk.mark_collect_done(account_id or "default")
 
 
 @app.on_event("startup")
@@ -82,6 +82,16 @@ async def _startup_cleanup():
         _cleanup_orphan_images()
     except Exception:  # noqa: BLE001
         pass
+
+
+@app.on_event("shutdown")
+async def _shutdown_close_engines():
+    """后端退出钩子：优雅关闭全部账号引擎（ctx.close() 落盘登录态，绝不用 pkill -9）。"""
+    try:
+        from codex_xhs import browser_client
+        await asyncio.wait_for(browser_client.stop(), timeout=20)
+    except Exception as e:  # noqa: BLE001
+        print(f"[shutdown] 引擎关闭异常（非阻断）: {e}")
 
 
 @app.post("/api/cleanup_images")
@@ -174,6 +184,12 @@ def _init_tables(con):
         con.execute("ALTER TABLE drafts ADD COLUMN images TEXT")
     except sqlite3.OperationalError:
         pass  # 列已存在
+    # 架构改造 P1：多账户维度 —— 各表补 account_id（默认 default，老数据兼容）
+    for _tbl in ("notes", "publish_logs", "clients", "drafts"):
+        try:
+            con.execute(f"ALTER TABLE {_tbl} ADD COLUMN account_id TEXT DEFAULT 'default'")
+        except sqlite3.OperationalError:
+            pass  # 列已存在
     con.commit()
 
 
@@ -239,6 +255,12 @@ async def login_status():
             "nickname": "",
             "raw": f"local-cookie web_session={'有' if ws else '无'} expires={'未来' if exp_ok else '过期'}",
         }
+        # 登录恢复闭环：纸面 Cookie 有效（用户已重新扫码/导入）→ 自动解除该账号软风控
+        if logged_in:
+            try:
+                risk.resolve("default", reason="登录态有效（login_status）")
+            except Exception:  # noqa: BLE001
+                pass
     except Exception as e:
         result = {"status": "unknown", "logged_in": False, "nickname": "", "raw": f"本地判定失败: {str(e)[:80]}"}
 
@@ -426,7 +448,11 @@ async def _check_chrome_state(req, browser_client):
 
 
 async def _launch_cdp_chrome(port: int, profile_dir: str, browser_client):
-    """带调试参数启动 Chrome（平台脚本或直启）并轮询等待调试端口就绪。"""
+    """带调试参数启动 Chrome（平台脚本或直启）并轮询等待调试端口就绪。
+
+    B 方案（引擎模式，macOS 走 else 分支）：引擎由 engine_pool 自动管理，
+    打开小红书登录页即完成「配置」，无需远程调试端口。
+    """
     script = _platform_setup_script()
     if script is not None:
         r = subprocess.run([sys.executable, str(script), str(port), profile_dir],
@@ -437,14 +463,16 @@ async def _launch_cdp_chrome(port: int, profile_dir: str, browser_client):
         if out == "CHROME_RUNNING":
             return {"ok": False, "need_restart": True,
                     "note": "Chrome 正在运行，请退出后重试，或点「打开远程调试设置」开启开关"}
-    else:
-        browser_client.launch_profile_chrome()
-    for _ in range(30):
-        await asyncio.sleep(1)
-        if await _probe_cdp(port):
-            return {"ok": True, "status": "ready", "note": "CDP 已配置完成（Chrome 已带调试参数启动，独立 profile）"}
-    return {"ok": False,
-            "note": "Chrome 已启动但未检测到远程调试开启——可能您未在 Chrome 弹窗中点「允许」。本次配置已停止：请重新点击「一键配置 CDP」，在 Chrome 弹窗中选择「允许」后再继续；若选择「不允许」，远程调试功能将无法使用。"}
+        for _ in range(30):
+            await asyncio.sleep(1)
+            if await _probe_cdp(port):
+                return {"ok": True, "status": "ready", "note": "CDP 已配置完成（Chrome 已带调试参数启动，独立 profile）"}
+        return {"ok": False,
+                "note": "Chrome 已启动但未检测到远程调试开启——可能您未在 Chrome 弹窗中点「允许」。本次配置已停止：请重新点击「一键配置 CDP」，在 Chrome 弹窗中选择「允许」后再继续；若选择「不允许」，远程调试功能将无法使用。"}
+    # B 方案（引擎模式）：无需远程调试端口，打开登录页即完成
+    await browser_client.launch_profile_chrome()
+    return {"ok": True, "status": "ready",
+            "note": "已打开小红书登录页（引擎自动管理，无需远程调试配置）。请扫码登录后返回继续。"}
 
 
 @app.post("/api/cdp_pick_chrome")
@@ -471,8 +499,8 @@ async def cdp_open_inspect():
     from codex_xhs import browser_client
     if browser_client.chrome_executable() is None:
         return {"ok": False, "note": "未找到 Chrome，请填写 Chrome 路径或先安装 Google Chrome"}
-    browser_client.open_inspect_remote_debugging()
-    return {"ok": True, "note": "已打开远程调试设置页，请在 Chrome 中开启「Allow remote debugging」，完成后返回本页点「刷新状态」"}
+    await browser_client.open_inspect_remote_debugging()
+    return {"ok": True, "note": "已打开小红书登录页（引擎自动管理调试能力，无需远程调试设置）。扫码登录后返回本页继续"}
 
 
 @app.get("/api/qrcode")
@@ -508,6 +536,8 @@ class SearchReq(BaseModel):
     distance: str = ""
     # 快速档：同页连续导航补全（去拟人等待），默认关（拟人串行，安全优先）
     fast: bool = False
+    # 多账户（P1）：使用哪个账号引擎采集；空 = default（向后兼容）
+    account_id: str = ""
 
 
 def _target_chrome_cookie_db(profile_dir: str) -> str | None:
@@ -614,17 +644,30 @@ async def _try_restore_daily(browser_client, cookie_reader, now_us: int) -> dict
 async def _require_real_login() -> dict:
     """真实登录校验（采集/搜索前置，解决「纸面登录」空跑问题）。
 
-    纸面登录态（本地 cookies.json 副本）≠ 目标调试 Chrome 内真实会话有效：
+    纸面登录态（本地 cookies.json 副本）≠ 目标 Chrome 内真实会话有效：
     小红书 Cookie 有效期短（数小时~数天），副本可能「未过期」而真实会话早已失效，
     导致采集打开页面停在登录界面、一条都采不到。
 
-    校验/恢复链路（三层）：
-    ① 目标 Chrome（独立 Profile）Cookie 库 → 有有效 web_session → OK；
-    ② 无 → 自动读取日常 Chrome（用户已登录账号，如 Vicky）的有效 Cookie，
+    校验/恢复链路（B 方案引擎优先）：
+    ① 引擎 CDP（登录发生在引擎内，内存 Cookie 最实时）→ 有有效 web_session → OK；
+    ② 目标 Chrome（独立 Profile）磁盘 Cookie 库 → 有有效 web_session → OK；
+    ③ 无 → 自动读取日常 Chrome（用户已登录账号）的有效 Cookie，
        落盘 cookies.json 并注入目标浏览器 → 恢复成功（方案 A 自动化，无需扫码）；
-    ③ 都没有 → 拦截，提示扫码/导入。
+    ④ 都没有 → 拦截，提示扫码/导入。
     """
-    from codex_xhs import browser_client, cookie_reader
+    from codex_xhs import browser_client, cookie_reader, engine_pool
+
+    # ① 引擎 CDP（B 方案）：引擎内存 Cookie 最实时，无需等 SQLite 落盘
+    try:
+        eng = await engine_pool.pool.get("default")
+        mem = await eng.read_cookies()
+        if any(c.get("name") == "web_session" for c in mem):
+            r = await _verify_cookies_or_raise(mem, "default")
+            if r.get("logged_in"):
+                return {"ok": True, "code": "ok", "note": "引擎真实登录有效（CDP）"}
+    except Exception as e:  # noqa: BLE001
+        log.warning("引擎 CDP 真实校验失败（走文件链路）: %s", e)
+
     try:
         _, profile_dir = browser_client._profile_settings()
     except Exception as e:  # noqa: BLE001
@@ -647,19 +690,27 @@ async def _require_real_login() -> dict:
     }
 
 
-async def _require_login():
-    """登录态熔断：搜索/克隆/采集客户前检查登录态（30s 缓存，不反复连 Chrome）。
-    双重校验：① 本地导入 Cookie（纸面）② 目标调试 Chrome 真实会话（防空跑）。
-    任一明确失效即拦截并给出恢复指引。"""
+async def _require_login(account_id: str = "default"):
+    """登录态熔断（每账号）：搜索/克隆/采集客户前检查登录态（30s 缓存，不反复连 Chrome）。
+
+    ① 风控状态：该账号处于熔断/需人工（manual）时直接拦截并说明原因；
+    ② 本地导入 Cookie（纸面）；
+    ③ default 账号追加真实会话校验（目标引擎/日常 Chrome 恢复链，防空跑）。
+    任一明确失效即拦截并给出恢复指引。
+    """
+    blocked, reason = risk.is_blocked(account_id)
+    if blocked:
+        raise HTTPException(403, reason)
     st = await login_status()
     if st.get("status") == "not_logged_in":
         raise HTTPException(
             403,
             "小红书登录态已失效：请导入有效 Cookie（左侧面板「导入 Cookie」）或去 Chrome 扫码登录后重试",
         )
-    real = await _require_real_login()
-    if not real.get("ok"):
-        raise HTTPException(403, real.get("note", "目标 Chrome 未登录小红书，请先扫码登录或导入 Cookie"))
+    if account_id == "default":
+        real = await _require_real_login()
+        if not real.get("ok"):
+            raise HTTPException(403, real.get("note", "目标 Chrome 未登录小红书，请先扫码登录或导入 Cookie"))
 
 
 @app.post("/api/search")
@@ -699,8 +750,8 @@ import uuid
 _COLLECT_TASKS: dict = {}
 
 
-def _rank_and_insert(con, n: dict, keyword: str, now: str) -> bool:
-    """单条笔记评分 + 落库。返回是否成功。"""
+def _rank_and_insert(con, n: dict, keyword: str, now: str, account_id: str = "default") -> bool:
+    """单条笔记评分 + 落库（带账号维度）。返回是否成功。"""
     try:
         n["keyword"] = keyword
         n["local_cover"] = ""
@@ -711,7 +762,7 @@ def _rank_and_insert(con, n: dict, keyword: str, now: str) -> bool:
                   "dimensions": {"like_fan_ratio": 0.0, "low_fan": 0.0,
                                  "interaction_health": 0.0, "freshness": 0.0}}
         con.execute(
-            "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 n.get("feed_id"), keyword, n.get("title", ""), n.get("type", ""),
                 n.get("user_id"), n.get("nickname", ""), n.get("avatar", ""),
@@ -722,6 +773,7 @@ def _rank_and_insert(con, n: dict, keyword: str, now: str) -> bool:
                 _to_int(n.get("fans_count")), n.get("publish_time"),
                 si["score"], si["tag"], si["fan_ratio"],
                 json.dumps(si, ensure_ascii=False), now, n.get("video_url", ""),
+                account_id or "default",
             ),
         )
         return True
@@ -771,7 +823,7 @@ def _keep_image(f, ids: set) -> bool:
     return feed_id in ids
 
 
-def _persist_notes(keyword: str, notes: list) -> tuple:
+def _persist_notes(keyword: str, notes: list, account_id: str = "default") -> tuple:
     """搜索/采集结果落库：新结果替换旧批次（用完即失效）+ 本地评分。
     返回 (added, total, top)。"""
     con = _db()
@@ -780,7 +832,7 @@ def _persist_notes(keyword: str, notes: list) -> tuple:
     now = datetime.datetime.now().isoformat(timespec="seconds")
     saved = 0
     for n in notes:
-        if _rank_and_insert(con, n, keyword, now):
+        if _rank_and_insert(con, n, keyword, now, account_id):
             saved += 1
     con.commit()
 
@@ -792,7 +844,7 @@ def _persist_notes(keyword: str, notes: list) -> tuple:
     return saved, total, [dict(r) for r in top]
 
 
-async def _enrich_notes(notes: list, fast: bool = False) -> list:
+async def _enrich_notes(notes: list, fast: bool = False, account_id: str = "default") -> list:
     """详情补全：互动数据（赞/藏/评/转/发布时间/作者 uid）+ 作者粉丝数（按 uid 缓存）。
 
     搜索卡片只有点赞粗值；详情页 SSR 提供全量互动与作者 uid，作者主页提供粉丝数
@@ -800,23 +852,25 @@ async def _enrich_notes(notes: list, fast: bool = False) -> list:
 
     fast=True 快速档：直连浏览器同页连续导航（无拟人 sleep、渲染等待缩短），20 条约
     5 分钟 → 2 分钟；fast=False 拟人串行（默认，安全优先，保持真人浏览节奏）。
+    account_id：使用哪个账号引擎补全详情（默认 default）。
     """
     cache: dict = {}
     for n in notes:
         try:
             if fast:
-                await _enrich_fast(n, cache)
+                await _enrich_fast(n, cache, account_id)
             else:
-                n = await get_feed_detail(n)
-                n = await get_user_profile(n, cache)
+                n = await get_feed_detail(n, account_id)
+                n = await get_user_profile(n, cache, account_id)
         except Exception:  # noqa: BLE001 单条失败不影响整体
             continue
     return notes
 
 
-async def _enrich_fast(n: dict, cache: dict) -> None:
+async def _enrich_fast(n: dict, cache: dict, account_id: str = "default") -> None:
     """快速档：直连详情页补互动 + 作者主页补粉丝（无拟人等待）。"""
-    d = await browser_client.note(n.get("feed_id", ""), n.get("xsec_token", ""), wait_ms=2500)
+    d = await browser_client.note(n.get("feed_id", ""), n.get("xsec_token", ""),
+                                  wait_ms=2500, account_id=account_id)
     for k in ("liked_count", "collected_count", "comment_count", "shared_count", "user_id", "author_nick"):
         if d.get(k):
             n[k] = d[k]
@@ -824,14 +878,14 @@ async def _enrich_fast(n: dict, cache: dict) -> None:
         n["publish_time"] = int(d["publish_time_ms"]) // 1000
     uid = n.get("user_id")
     if uid:
-        await _fill_fans(n, uid, cache)
+        await _fill_fans(n, uid, cache, account_id)
 
 
-async def _fill_fans(n: dict, uid: str, cache: dict) -> None:
+async def _fill_fans(n: dict, uid: str, cache: dict, account_id: str = "default") -> None:
     """作者粉丝数（按 uid 缓存；作者主页失败兜底 0）。"""
     if uid not in cache:
         try:
-            u = await browser_client.user(uid, wait_ms=3500)
+            u = await browser_client.user(uid, wait_ms=3500, account_id=account_id)
             cache[uid] = u.get("fans", "") or "0"
         except Exception:  # noqa: BLE001
             cache[uid] = "0"
@@ -840,9 +894,20 @@ async def _fill_fans(n: dict, uid: str, cache: dict) -> None:
 
 @app.post("/api/collect_start")
 async def collect_start(req: SearchReq):
-    """启动采集任务：后台滚动平台搜索页逐批提取，直到满额/平台不增长/用户停止。"""
-    await _require_login()
-    _check_collect_throttle()  # 拟人频率保护：距上次平台任务过近则拒绝
+    """启动采集任务：后台滚动平台搜索页逐批提取，直到满额/平台不增长/用户停止。
+
+    account_id 指定使用哪个账号引擎（空 = default）；多账户下采集号/发布号分离。
+    """
+    account_id = (req.account_id or "default").strip() or "default"
+    await _require_login(account_id)
+    _check_collect_throttle(account_id)  # 每账号拟人频率保护
+    # 任务唯一键防重复（现象 2）：同 keyword+account_id 在 60s 内（含刚结束）不允许重启，
+    # 防止「搜索等动作反复执行」被平台判定异常行为
+    dedup_key = f"{req.keyword.strip()}|{account_id}"
+    _now = time.time()
+    for _tid, _st in list(_COLLECT_TASKS.items()):
+        if _st.get("dedup_key") == dedup_key and _now - _st.get("started_ts", 0) < 60:
+            raise HTTPException(409, "同一关键词采集任务进行中或刚结束，请稍候再试（防重复操作触发风控）")
     for tid, st in list(_COLLECT_TASKS.items()):
         if st.get("status") == "running":
             st["stop_event"] = True
@@ -850,6 +915,8 @@ async def collect_start(req: SearchReq):
     state = {
         "status": "running", "keyword": req.keyword, "limit": req.limit,
         "collected": 0, "note": "", "stop_event": False,
+        "account_id": account_id, "dedup_key": dedup_key, "started_ts": _now,
+        "started_at": datetime.datetime.now().isoformat(timespec="seconds"),
     }
     _COLLECT_TASKS[tid] = state
 
@@ -863,11 +930,12 @@ async def collect_start(req: SearchReq):
                     "sort": req.sort, "note_type": req.note_type,
                     "time_range": req.time_range, "scope": req.scope, "distance": req.distance,
                 },
+                account_id=account_id,
             )
             items = res["items"]
             state["collected"] = len(items)
-            items = await _enrich_notes(items, fast=req.fast)
-            saved, total, top = _persist_notes(req.keyword, items)
+            items = await _enrich_notes(items, fast=req.fast, account_id=account_id)
+            saved, total, top = _persist_notes(req.keyword, items, account_id)
             if res.get("stopped"):
                 state["status"] = "stopped"
                 state["note"] = f"已停止：采集到 {len(items)} 条并完成排序" if len(items) else "已停止（未采到结果）"
@@ -881,10 +949,11 @@ async def collect_start(req: SearchReq):
             state["status"] = "error"
             state["note"] = f"采集失败：{str(e)[:100]}"
         finally:
-            _mark_collect_done()  # 结束即记录，供节流闸使用
+            _mark_collect_done(account_id)  # 结束即记录，供节流闸使用
 
     state["task"] = asyncio.create_task(worker())
-    return {"ok": True, "task_id": tid, "keyword": req.keyword, "limit": req.limit}
+    return {"ok": True, "task_id": tid, "keyword": req.keyword, "limit": req.limit,
+            "account_id": account_id}
 
 
 @app.get("/api/collect_progress")
@@ -896,6 +965,7 @@ def collect_progress(task_id: str = ""):
         "ok": True, "task_id": task_id, "status": st["status"],
         "keyword": st["keyword"], "limit": st["limit"],
         "collected": st["collected"], "note": st["note"],
+        "account_id": st.get("account_id", "default"),
     }
 
 
@@ -908,7 +978,8 @@ async def collect_stop(req: CollectStopReq):
     st = _COLLECT_TASKS.get(req.task_id)
     if st and st.get("status") == "running":
         st["stop_event"] = True
-        return {"ok": True, "note": "停止已请求，正在收尾…"}
+        return {"ok": True, "note": "停止已请求，正在收尾…",
+                "account_id": st.get("account_id", "default")}
     return {"ok": False, "note": "任务不存在或已结束"}
 
 
@@ -1465,17 +1536,36 @@ def _read_chrome_cookies() -> tuple[list | None, dict | None]:
 
 
 @app.post("/api/refresh_cookie_from_chrome")
-async def refresh_cookie_from_chrome():
-    """方案 A 自动续期：直接读日常 Chrome 的 Cookie 库（钥匙串解密）→ 校验 → 落盘。
+async def refresh_cookie_from_chrome(account_id: str = "default"):
+    """登录态自动续期（B 方案引擎优先）：读引擎内存 Cookie（CDP，最实时）→ 校验 → 落盘 → 自动解除风控。
 
-    - 已授权：读库 → 过滤小红书 cookie → 转文本 → 走与手动导入相同的校验/保存链路；
-    - 未授权（首次）：读取会触发系统钥匙串授权弹窗，返回 need_auth=True 引导用户点「始终允许」；
-    - Chrome 库缺失 / 未登录小红书：返回可读错误，前端引导扫码或手动导入。
+    ① 引擎 CDP：登录发生在引擎内（扫码页就是引擎打开的），内存 Cookie 立即可读，
+       成功后 risk.resolve(account_id) —— 软风控 manual/cooldown 自动解锁（现象 3 闭环）；
+    ② 回退磁盘：引擎未运行/未登录时，读引擎 profile 磁盘 Cookie 库（钥匙串解密，
+       跨平台无 CDP 依赖），成功同样自动解锁；
+    ③ 都没有 → 返回引导信息（扫码或手动导入）。
     """
-    from codex_xhs import browser_client, cookie_reader
+    from codex_xhs import browser_client, cookie_reader, engine_pool, risk
 
-    # 统一独立 profile 浏览器架构：登录态来源 = 采集浏览器自身（.codex-xhs-profile）。
-    # 读取其 Chrome Cookie 库（钥匙串解密，跨平台无 CDP 依赖），扫码登录落盘即闭环。
+    account_id = account_id or "default"
+    # ① 引擎内存 Cookie（CDP，登录后立即可用）
+    try:
+        eng = await engine_pool.pool.get(account_id)
+        mem = await eng.read_cookies()
+        if any(c.get("name") == "web_session" for c in mem):
+            r = await _verify_cookies_or_raise(mem, account_id)
+            if r.get("logged_in"):
+                _save_cookies_file(mem)
+                risk.resolve(account_id, reason="引擎登录恢复（CDP）")
+                return {
+                    "ok": True, "valid": True, "count": len(mem),
+                    "account": "已登录（引擎）",
+                    "raw": f"url={r.get('url')} hasLoginUi={r.get('hasLoginUi')}",
+                }
+    except Exception as e:  # noqa: BLE001
+        log.warning("引擎 CDP 读 Cookie 失败（回退磁盘）: %s", e)
+
+    # ② 回退：读引擎 profile 磁盘 Cookie 库（钥匙串解密，跨平台无 CDP 依赖）
     chrome_cookies, err = _read_chrome_cookies()
     if chrome_cookies is None:
         return err
@@ -1488,7 +1578,7 @@ async def refresh_cookie_from_chrome():
     if not cookies:
         return {"ok": False, "need_auth": False, "error": "从 Chrome 解析 Cookie 失败"}
 
-    r = await _verify_cookies_or_raise(cookies)
+    r = await _verify_cookies_or_raise(cookies, account_id)
 
     if not r.get("logged_in"):
         return {
@@ -1500,6 +1590,7 @@ async def refresh_cookie_from_chrome():
         }
 
     _save_cookies_file(cookies)
+    risk.resolve(account_id, reason="引擎登录恢复（磁盘库）")  # 软风控自动解锁
     ws = next((c["value"] for c in cookies if c["name"] == "web_session"), "")
     return {
         "ok": True,
@@ -1507,25 +1598,21 @@ async def refresh_cookie_from_chrome():
         "count": len(cookies),
         "account": (ws[:8] + "…") if ws else "已登录",
         "source": "chrome",
-        "note": "已自动从 Chrome 读取登录态并保存（方案 A：钥匙串解密，无 CDP 依赖）。",
+        "note": "已自动读取登录态并保存（引擎 CDP / 磁盘库），软风控已自动解除。",
     }
 
 
-async def _verify_cookies_or_raise(cookies: list) -> dict:
-    """校验导入/读取的 Cookie（独立 profile Chrome），失败抛 502；后台窗口模式用后即停。"""
+async def _verify_cookies_or_raise(cookies: list, account_id: str = "default") -> dict:
+    """校验导入/读取的 Cookie（headless 优先、回退账号引擎），失败抛 502。
+
+    引擎生命周期由 shutdown 钩子统一管理（不再"用后即停"，防止中断引擎登录态）。
+    """
     from codex_xhs import browser_client
 
     try:
-        return await browser_client.verify_cookies(cookies)
+        return await browser_client.verify_cookies(cookies, account_id)
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"校验失败（独立浏览器未就绪）：{str(e)[:100]}")
-    finally:
-        try:
-            # 用后即停仅限后台窗口模式；演示（XHS_PROFILE_WINDOW=normal）保留窗口供用户查看
-            if os.environ.get("XHS_PROFILE_WINDOW") != "normal":
-                await browser_client.stop_profile()
-        except Exception:  # noqa: BLE001
-            pass
+        raise HTTPException(502, f"校验失败（浏览器未就绪）：{str(e)[:100]}")
 
 
 @app.post("/api/import_cookie")
