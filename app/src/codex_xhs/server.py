@@ -33,10 +33,17 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # ---- 路径 ----
-BASE = Path(__file__).resolve().parents[3]  # ~/Desktop/codex-zhuke（server.py 在 app/src/codex_xhs/ 下）
-DB_PATH = BASE / "data" / "xhs_notes.db"
+# 安装根与数据根分离（壳 B 批）：打包态下数据目录由 launcher 注入 CODX_XHS_DATA
+# （~/Library/Application Support/codex-zhuke/data），静态资源仍取自安装根。
+if getattr(sys, "_MEIPASS", None):  # PyInstaller 打包态：_MEIPASS 为 bundle 资源根
+    BASE = Path(sys._MEIPASS)
+else:
+    BASE = Path(__file__).resolve().parents[3]  # ~/Desktop/codex-zhuke（server.py 在 app/src/codex_xhs/ 下）
+_APP_DATA = os.environ.get("CODX_XHS_DATA")
+DATA_DIR = Path(_APP_DATA).expanduser() if _APP_DATA else BASE / "data"
+DB_PATH = DATA_DIR / "xhs_notes.db"
 WEB_DIR = BASE / "app" / "web"
-IMAGES_DIR = BASE / "data" / "images"
+IMAGES_DIR = DATA_DIR / "images"
 
 _INTERVAL = (1.0, 1.8)
 
@@ -103,7 +110,7 @@ def cleanup_images():
 
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-VIDEOS_DIR = BASE / "data" / "videos"
+VIDEOS_DIR = DATA_DIR / "videos"
 VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -249,7 +256,7 @@ async def login_status():
         return _LOGIN_CACHE["data"]
 
     try:
-        logged_in, ws, exp_ok = _read_cookie_status(BASE / "data" / "cookies.json")
+        logged_in, ws, exp_ok = _read_cookie_status(DATA_DIR / "cookies.json")
         result = {
             "status": "logged_in" if logged_in else "not_logged_in",
             "logged_in": logged_in,
@@ -582,7 +589,7 @@ def _chrome_cookies_to_saved(cookies: list) -> list:
 def _persist_restored_cookies(cookies: list) -> int:
     """把恢复的 Cookie 落盘 cookies.json（方案 A 格式），返回条数。"""
     import datetime as _dt
-    p = BASE / "data" / "cookies.json"
+    p = DATA_DIR / "cookies.json"
     payload = {
         "cookies": _chrome_cookies_to_saved(cookies),
         "imported_at": _dt.datetime.now().isoformat(timespec="seconds"),
@@ -1490,7 +1497,7 @@ async def cookie_info():
     原实现每次调 browser_client.cookies() → 内部 _load(explore) 会在 Chrome 打开小红书
     首页 tab 再关闭——APP 每次刷新都触发「小红书 tab 闪开又消失」（用户痛点）。改为纯本地读取。"""
     try:
-        p = BASE / "data" / "cookies.json"
+        p = DATA_DIR / "cookies.json"
         data = {}
         if p.exists():
             data = json.loads(p.read_text(encoding="utf8"))
@@ -1537,7 +1544,7 @@ def _parse_cookie_text(text: str) -> list[dict]:
 
 def _save_cookies_file(cookies: list[dict]):
     """备份旧文件后保存 cookies.json（供 profile 模式启动自动载入）。"""
-    dest = BASE / "data" / "cookies.json"
+    dest = DATA_DIR / "cookies.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         dest.replace(dest.with_suffix(".json.bak"))

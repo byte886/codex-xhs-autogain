@@ -24,8 +24,11 @@ import uuid
 # ---------------------------------------------------------------------------
 # 基础路径
 # ---------------------------------------------------------------------------
-ROOT = pathlib.Path(__file__).resolve().parents[3]          # 项目根
-DATA_DIR = ROOT / "data"
+ROOT = pathlib.Path(__file__).resolve().parents[3]          # 项目根（源码/安装根）
+# 数据目录：打包态（独立 .app）由 launcher 注入 CODX_XHS_DATA（应用支持目录），
+# 开发态默认 ROOT/data。数据与代码分离是壳（B 批）的硬约束：升级换包不丢数据。
+_APP_DATA = os.environ.get("CODX_XHS_DATA")
+DATA_DIR = pathlib.Path(_APP_DATA).expanduser() if _APP_DATA else ROOT / "data"
 ACCOUNTS_FILE = DATA_DIR / "accounts.json"
 CONFIG_FILE = DATA_DIR / "config.json"
 

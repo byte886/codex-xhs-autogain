@@ -23,7 +23,11 @@ from codex_xhs.engine_pool import pool
 
 log = xlog.get("browser")
 
-_ROOT = pathlib.Path(__file__).resolve().parents[3]  # app/src/codex_xhs -> 项目根
+if getattr(sys, "_MEIPASS", None):
+    # 打包态（PyInstaller macOS）：资源随包进 Contents/Resources
+    _ROOT = pathlib.Path(sys._MEIPASS).parent / "Resources"
+else:
+    _ROOT = pathlib.Path(__file__).resolve().parents[3]  # app/src/codex_xhs -> 项目根
 _EXTRACT_SRC = (_ROOT / "extension" / "lib" / "extract.js").read_text(encoding="utf8")
 _PRESS_SCRIPT = _ROOT / "scripts" / "browser" / "cdp" / "press_allow.applescript"
 _XHS = "https://www.xiaohongshu.com"
@@ -246,7 +250,10 @@ async def _headless_explore(cookies: list[dict]) -> dict:
         page = await ctx.new_page()
         try:
             await page.goto(_XHS + "/explore", wait_until="domcontentloaded", timeout=40000)
+            # 等 SPA 重定向/登录跳转稳定后再注入（goto 期间注入会随旧文档丢失）；
+            # add_init_script 仅对【新文档】生效，故在此手动补注一次（幂等）
             await asyncio.sleep(5)
+            await page.evaluate(_EXTRACT_SRC)
             return await page.evaluate(
                 "() => ({"
                 " logged_in: !!xhsIsLoggedIn(),"
@@ -331,8 +338,9 @@ async def _verify_profile(cookies_list: list[dict], account_id: str = "default")
             await cdp.send("Network.setCookies", {"cookies": cookies_list})
         try:
             await page.goto(_XHS + "/explore", wait_until="domcontentloaded", timeout=40000)
-            await page.evaluate(_EXTRACT_SRC)
+            # 同 _headless_explore：等 SPA 重定向稳定后再注入，避免函数随旧文档丢失
             await asyncio.sleep(5)
+            await page.evaluate(_EXTRACT_SRC)
             result = await page.evaluate(
                 "() => ({"
                 " logged_in: !!xhsIsLoggedIn(),"
