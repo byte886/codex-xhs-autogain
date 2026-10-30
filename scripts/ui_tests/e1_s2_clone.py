@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""E1-场景2 克隆 → 创作页（连 9223 可见 Chrome）。
+"""E1-场景2 克隆 → 创作页（连 9333 headless）。
 
 验证：按 badge-note 图文徽标选卡（铁律：不能按卡片 class，视频卡不带 video class）→ hover 克隆按钮（非 off 态）→
 点击 → /api/clone 请求 → 创作 tab 自动激活 → 标题/图片渲染（异步补图 15-25s）。
@@ -7,14 +7,14 @@
   - 选图文卡必须按 .badge-note 徽标文本（图文/视频），不能按卡片 class（视频卡 class 不带 video，按钮带 off class + title 拦截是产品行为正确）；
   - 切 Tab 必须原生 click，严禁 evaluate DOM click；goto 后必须等 .flow-hint 含「关键词采集」稳定 +500ms 再等 .view-switch。
 
-前置：后端 8791；9223 可见 Chrome + 小红书已登录；有已采集图文卡（数据依赖）。
+前置：后端 8791；9333 headless + 小红书已登录；有已采集图文卡（数据依赖）。
 """
 from playwright.sync_api import sync_playwright
 
 reqs, errs = [], []
 
 with sync_playwright() as p:
-    b = p.chromium.connect_over_cdp('http://127.0.0.1:9223')
+    b = p.chromium.connect_over_cdp('http://127.0.0.1:9333')  # B 方案新架构：9333 headless 测试实例（旧 9223 已弃）
     ctx = b.contexts[0]
     pg = next((x for x in ctx.pages if '8791' in (x.url or '')), None)
     if pg is None:

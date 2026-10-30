@@ -17,6 +17,9 @@ with sync_playwright() as p:
     pg.wait_for_function("document.querySelector('.flow-hint')?.innerText.includes('线索')", timeout=10000)
 
     body = pg.inner_text("body")
+    # 属地断言改为动态：渲染「属地分布 TOP」中实际存在的省份（不再写死具体省，避免数据耦合）
+    provs = [r[0] for r in sqlite3.connect(Path(__file__).resolve().parents[2] / 'data' / 'xhs_notes.db').execute('select distinct ip_location from clients where ip_location != ""').fetchall()]
+    top_hit = any(p in body for p in provs) if provs else ("属地分布 TOP" in body)
     checks = {
         "意向分布": "意向分布" in body,
         "属地分布TOP": "属地分布 TOP" in body,
@@ -25,8 +28,7 @@ with sync_playwright() as p:
         "上意向": "上意向" in body,
         "中意向": "中意向" in body,
         "低意向": "低意向" in body,
-        "属地湖北": "湖北" in body,
-        
+        "属地渲染": top_hit,
         "线索总数": "线索总数" in body,
         "留联系方式命中": "留联系方式命中" in body,
     }

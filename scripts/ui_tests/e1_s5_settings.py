@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""E1-场景5 设置页三卡（AI Key 门控 / CDP 配置 / 账号人设）（连 9223 可见 Chrome）。
+"""E1-场景5 设置页三卡（AI Key 门控 / CDP 配置 / 账号人设）（连 9333 headless）。
 
 验证：AI Key 保存 → 掩码/状态条 → AI 按钮灰态解除 → 测后复原；CDP 区状态；账号人设保存 toast。
 踩坑记录：
@@ -7,12 +7,12 @@
   - AI 按钮灰态看 disabled/off class（创作页 .tab 需已激活采集态）；
   - 测后复原：真实清除 Key 需后端清除语义（空 key 保存=保留是保护设计），本轮由 AI Key 清除修复（e1_s5 配套）提供「清除配置」入口。
 
-前置：后端 8791；9223 可见 Chrome。
+前置：后端 8791；9333 headless。
 """
 from playwright.sync_api import sync_playwright
 
 with sync_playwright() as p:
-    b = p.chromium.connect_over_cdp('http://127.0.0.1:9223')
+    b = p.chromium.connect_over_cdp("http://127.0.0.1:9333")
     ctx = b.contexts[0]
     pg = next((x for x in ctx.pages if '8791' in (x.url or '')), None)
     pg.goto('http://127.0.0.1:8791/', timeout=20000)

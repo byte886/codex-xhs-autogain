@@ -30,9 +30,9 @@ with sync_playwright() as p:
     res.append('AI_BTN_DISABLED=' + str(ai_disabled))
 
     # ===== 场景 A：违规词（导流词"微信" + 绝对化"最好"）→ 质检面板命中 =====
-    pg.fill('.publish input[maxlength="50"]', '翡翠手镯最好 加微信看货')
+    pg.fill('.publish input[maxlength="50"]', '南红玛瑙手串最好 加微信看货')
     pg.fill('.publish textarea', '这是一段超过五十字的正文内容，用来测试质检的结构检查功能是否正常工作，测试文字测试文字测试文字测试文字测试文字。')
-    pg.fill('.publish input[placeholder^="#"]', '#翡翠 #手镯')
+    pg.fill('.publish input[placeholder^="#"]', '#南红 #手串')
     pg.click('.qc-head'); pg.wait_for_timeout(300)
     qc_text = pg.evaluate("document.querySelector('.qc-body')?.innerText || ''")
     res.append('QC_HIT_DRAIN=' + str('导流词' in qc_text and '微信' in qc_text))
@@ -48,9 +48,9 @@ with sync_playwright() as p:
 
     # ===== 场景 B：合规内容（无违规词+分段+长文）→ 提示级确认（图片二创/原创） =====
     dialogs.clear()
-    pg.fill('.publish input[maxlength="50"]', '翡翠手镯挑选攻略')
-    pg.fill('.publish textarea', '第一段：讲清买翡翠手镯前先看种水。\n\n第二段：颜色浓淡影响价值。\n\n第三段：种老水头足才值得入手，新手避坑记住这三点。')
-    pg.fill('.publish input[placeholder^="#"]', '#翡翠 #珠宝')
+    pg.fill('.publish input[maxlength="50"]', '南红玛瑙手串挑选攻略')
+    pg.fill('.publish textarea', '第一段：讲清买南红玛瑙手串前先看种水。\n\n第二段：颜色浓淡影响价值。\n\n第三段：种老水头足才值得入手，新手避坑记住这三点。')
+    pg.fill('.publish input[placeholder^="#"]', '#南红 #珠宝')
     pg.wait_for_timeout(300)
     pg.click('.pub-btns .btn-pub')
     pg.wait_for_timeout(600)

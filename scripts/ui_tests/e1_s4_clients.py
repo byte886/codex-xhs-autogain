@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""E1-场景4 真实采集客户（连 9223 可见 Chrome）。
+"""E1-场景4 真实采集客户（连 9333 headless）。
 
 验证：hover 图文卡 → 「采集客户」按钮 → 点击 → 采集互动用户（真实访问小红书详情页 30-90s）→ 自动切客户 tab。
 踩坑记录：
@@ -7,12 +7,12 @@
   - 低互动笔记（评论 1-4 条）可能首批采集为空——属正常，换评论最多的卡重采；
   - 30s 后只验证是否已切客户 tab，完整结果（线索列表/意向/属地/获客指引/CSV）见 /tmp/e1_s4_clients_ui 脚本与完成记录。
 
-前置：后端 8791；9223 可见 Chrome + 已登录；有已采集图文卡（带评论互动）；风控窗口内低频执行。
+前置：后端 8791；9333 headless + 已登录；有已采集图文卡（带评论互动）；风控窗口内低频执行。
 """
 from playwright.sync_api import sync_playwright
 
 with sync_playwright() as p:
-    b = p.chromium.connect_over_cdp('http://127.0.0.1:9223')
+    b = p.chromium.connect_over_cdp("http://127.0.0.1:9333")
     ctx = b.contexts[0]
     pg = next((x for x in ctx.pages if '8791' in (x.url or '')), None)
 

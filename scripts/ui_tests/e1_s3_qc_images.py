@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""E1-场景3 创作页质检 + 图片操作 + 草稿库（连 9223 可见 Chrome）。
+"""E1-场景3 创作页质检 + 图片操作 + 草稿库（连 9333 headless）。
 
 验证：克隆进创作 → 质检面板（违规词/结构/二创/原创）→ 违规词命中（绝对化用语）→ 合规恢复 →
 lightbox 看全图（点击灯箱本身关闭，Escape 无效）→ 删除图片 → 本地文件追加 → 保存草稿 → 草稿库恢复/删除。
@@ -8,7 +8,7 @@ lightbox 看全图（点击灯箱本身关闭，Escape 无效）→ 删除图片
   - 质检展开/收起通过 .qc-head 点击（收起后再展开触发实时检查）；
   - 本地追加图片路径必须可移植：优先仓库 data/images 现有缓存图，兜底 /tmp 截图，不硬编码 /Users/<用户名>。
 
-前置：后端 8791；9223 可见 Chrome + 已登录；有已采集图文卡；数据可污染（草稿数会变）。
+前置：后端 8791；9333 headless + 已登录；有已采集图文卡；数据可污染（草稿数会变）。
 """
 import os
 import pathlib
@@ -17,7 +17,7 @@ from playwright.sync_api import sync_playwright
 ROOT = pathlib.Path(__file__).resolve().parents[2]  # 仓库根（scripts/ui_tests/ → 上两级）
 
 with sync_playwright() as p:
-    b = p.chromium.connect_over_cdp('http://127.0.0.1:9223')
+    b = p.chromium.connect_over_cdp("http://127.0.0.1:9333")
     ctx = b.contexts[0]
     pg = next((x for x in ctx.pages if '8791' in (x.url or '')), None)
 

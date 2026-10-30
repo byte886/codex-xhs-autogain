@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""E1-场景6 登录态与 Cookie 闭环（连 9223 可见 Chrome）。
+"""E1-场景6 登录态与 Cookie 闭环（连 9333 headless）。
 
 验证：清本地 cookies.json → 刷新 → 「未登录/Cookie 失效」状态 + LoginModal 引导（Profile 提示/打开小红书链接/
 「立即读取 Chrome 登录态」按钮）→ 点立即读取（读日常 Chrome，未登录则失败走扫码引导）→ 恢复 cookies.json →
@@ -8,9 +8,9 @@
 登录状态判定有 30s 后端缓存，清 cookie 后需重启后端（或等缓存过期）才能看到未登录态。
 踩坑记录：
   - login_status 只读本地 cookies.json（刻意不拉浏览器）；重启后端 = pkill uvicorn + nohup 重启（保留 notes 数据）；
-  - 「立即读取 Chrome 登录态」读的是日常 Chrome（钥匙串解密），与 9223 测试 profile 无关——日常 Chrome 未登录时失败属预期，走扫码引导是产品设计。
+  - 「立即读取 Chrome 登录态」读的是日常 Chrome（钥匙串解密），与 9333 headless profile 无关——日常 Chrome 未登录时失败属预期，走扫码引导是产品设计。
 
-前置：后端 8791（本脚本会重启它）；9223 可见 Chrome；本脚本会短暂清空 data/cookies.json（自动恢复）。
+前置：后端 8791（本脚本会重启它）；9333 headless；本脚本会短暂清空 data/cookies.json（自动恢复）。
 """
 import json
 import pathlib
@@ -25,6 +25,13 @@ BACKUP = '/tmp/cookies_backup_e1s6.json'
 
 
 def restart_backend():
+    # B 方案新架构：先 SIGTERM 引擎主 Chrome（优雅关闭落盘登录态），再收 uvicorn。
+    # 禁止 pkill -9 直杀 uvicorn（绕过 shutdown 钩子会让引擎变孤儿、登录态不落盘，已实证）。
+    profile = str(pathlib.Path.home() / '.codex-xhs-profile')
+    subprocess.run(['bash', '-c',
+                    f'ENGINE_PID=$(pgrep -f "user-data-dir={profile}" | head -1); '
+                    f'[ -n "$ENGINE_PID" ] && kill -TERM $ENGINE_PID'], check=False)
+    time.sleep(6)
     subprocess.run(['pkill', '-9', '-f', 'uvicorn'], check=False)
     time.sleep(1)
     proc = subprocess.Popen(
@@ -46,7 +53,7 @@ def main():
 
         # 2) 刷新 APP → 未登录状态 + 弹窗
         with sync_playwright() as p:
-            b = p.chromium.connect_over_cdp('http://127.0.0.1:9223')
+            b = p.chromium.connect_over_cdp("http://127.0.0.1:9333")
             ctx = b.contexts[0]
             pg = next((x for x in ctx.pages if '8791' in (x.url or '')), None)
             if pg is None:
@@ -82,7 +89,7 @@ def main():
         time.sleep(1)
         # 5) 验证已登录恢复
         with sync_playwright() as p:
-            b = p.chromium.connect_over_cdp('http://127.0.0.1:9223')
+            b = p.chromium.connect_over_cdp("http://127.0.0.1:9333")
             ctx = b.contexts[0]
             pg = next((x for x in ctx.pages if '8791' in (x.url or '')), None)
             if pg is None:
