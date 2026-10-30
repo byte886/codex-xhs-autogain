@@ -50,6 +50,7 @@ from codex_xhs.collect_pipeline import (  # noqa: E402
 )
 from codex_xhs import browser_client  # noqa: E402（快速档 _enrich_notes 直连详情/主页）
 from codex_xhs import config, risk  # noqa: E402（架构改造 P1：配置中心 + 每账号风控）
+from codex_xhs import license as lic  # noqa: E402（授权薄层：free 恒放行，业务入口统一过闸）
 
 app = FastAPI(title="Codex 自动获客 · 本地工具")
 
@@ -690,6 +691,24 @@ async def _require_real_login() -> dict:
     }
 
 
+def _check_license_or_raise(feature: str) -> None:
+    """授权薄层闸门：业务入口统一过 check_license；free 恒放行（零影响）。
+
+    未来档位（activation/server）切换后，未授权功能在此 403 拦截，业务代码零改动。
+    """
+    ok, reason, detail = lic.check_license(feature)
+    if not ok:
+        log.warning("license 拦截 feature=%s detail=%s", feature, detail)
+        raise HTTPException(403, reason or "未授权功能")
+
+
+@app.get("/api/license_status")
+async def license_status():
+    """授权状态（前端设置页展示：模式/功能清单/指纹摘要）。"""
+    st = lic.license_status()
+    return {"ok": True, "status": st}
+
+
 async def _require_login(account_id: str = "default"):
     """登录态熔断（每账号）：搜索/克隆/采集客户前检查登录态（30s 缓存，不反复连 Chrome）。
 
@@ -899,6 +918,7 @@ async def collect_start(req: SearchReq):
     account_id 指定使用哪个账号引擎（空 = default）；多账户下采集号/发布号分离。
     """
     account_id = (req.account_id or "default").strip() or "default"
+    _check_license_or_raise("collect")  # 授权薄层：collect 功能闸门（free 恒放行）
     await _require_login(account_id)
     _check_collect_throttle(account_id)  # 每账号拟人频率保护
     # 任务唯一键防重复（现象 2）：同 keyword+account_id 在 60s 内（含刚结束）不允许重启，
@@ -1178,11 +1198,11 @@ class CloneReq(BaseModel):
 @app.post("/api/clone")
 async def clone(req: CloneReq):
     """克隆：取详情 → 下载图片（视频另下载原视频）到本地 → 返回可编辑载荷。
-
     图文：详情图片列表 → 本地下载 → 可编辑发布。
     视频：详情原视频下载到本地（读操作，不上传平台）；小红书视频上传通道为 P 级待办，
     发布时由用户在创作页手动上传/或后续补通道，克隆本身止于「本地拿到原视频」。
     """
+    _check_license_or_raise("clone")  # 授权薄层：clone 功能闸门（free 恒放行）
     await _require_login()
     con = _db()
     r = con.execute("SELECT * FROM notes WHERE feed_id=?", (req.feed_id,)).fetchone()
@@ -1874,6 +1894,7 @@ def _publish_guard(con, req: PublishReq) -> dict | None:
 
 @app.post("/api/publish")
 def publish(req: PublishReq):
+    _check_license_or_raise("publish")  # 授权薄层：publish 功能闸门（free 恒放行）
     # ① 拟人思考：发布前随机停顿 2-5s（像真人斟酌后再点）
     human_delay(2.0, 5.0)
 
@@ -2096,6 +2117,7 @@ async def ai_generate(req: AIGenReq):
     质量保障：①账号人设（行业/口吻/常发主题，data/persona.json）注入系统提示，保持人设一致；
     ②爆文黄金结构/标题公式内置于动作提示（_AI_PROMPTS），避免“通用AI味”与平庸文案。
     """
+    _check_license_or_raise("llm")  # 授权薄层：llm 功能闸门（free 恒放行）
     if req.action not in _AI_PROMPTS:
         raise HTTPException(400, f"未知 AI 动作：{req.action}")
     title = (req.note.get("title") or "")[:500]

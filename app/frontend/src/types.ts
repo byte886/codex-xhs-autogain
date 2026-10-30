@@ -127,3 +127,12 @@ export interface LoginStatus {
 export interface LogItem {
   [k: string]: unknown
 }
+
+export interface LicenseStatus {
+  mode: 'free' | 'activation' | 'server'
+  schema_version: number
+  features: string[]
+  machine_fingerprint: string
+  has_signature: boolean
+  activated_at: string | null
+}

@@ -1,4 +1,4 @@
-import type { Author, ClientUser, ClientsAgg, ClonePayload, LoginStatus, LogItem, Note, SearchParams, SearchResult } from './types'
+import type { Author, ClientUser, ClientsAgg, ClonePayload, LicenseStatus, LoginStatus, LogItem, Note, SearchParams, SearchResult } from './types'
 
 const BASE = ''
 
@@ -16,6 +16,10 @@ async function j<T>(res: Response): Promise<T> {
 
 export async function apiLoginStatus(): Promise<LoginStatus> {
   return j(await fetch(`${BASE}/api/login_status`))
+}
+
+export async function apiLicenseStatus(): Promise<{ ok: boolean; status: LicenseStatus }> {
+  return j(await fetch(`${BASE}/api/license_status`))
 }
 
 export async function apiCollectStart(p: SearchParams): Promise<{ ok: boolean; task_id: string; keyword: string; limit: number }> {

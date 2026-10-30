@@ -6,7 +6,19 @@ import { refreshSysStatus, toast } from '../store'
 import {
   apiGetLLMConfig, apiSetLLMConfig, apiClearLLMConfig, apiTestLLM,
   apiCdpStatus, apiCdpSetup, apiCdpOpenInspect, apiCdpPickChrome,
+  apiLicenseStatus,
 } from '../api'
+
+// ---- 授权状态（薄层：free 恒放行，展示模式/功能清单/指纹摘要） ----
+const lic = ref<{ mode: string; features: string[]; machine_fingerprint: string }>()
+async function loadLicense() {
+  try {
+    const r = await apiLicenseStatus()
+    lic.value = r.status
+  } catch {
+    lic.value = undefined
+  }
+}
 
 // ---- AI Key ----
 const aiCfg = ref<{ configured: boolean; openai_base_url: string; default_model: string; llm_api_key_masked: string }>()
@@ -156,7 +168,7 @@ async function savePersona() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadAi(), loadCdp(), loadPersona()])
+  await Promise.all([loadAi(), loadCdp(), loadPersona(), loadLicense()])
   fillAiForm()
 })
 </script>
@@ -165,6 +177,12 @@ onMounted(async () => {
   <div>
     <div class="page-title">设置 · AI 模型 / CDP 连接 / 账号人设</div>
     <div class="page-desc">三个配置项收敛一页：AI Key 门控（文稿/质检共用）、CDP 连接（采集/克隆前置）、账号人设（AI 生成保持行业口吻）。未配置项按钮灰态并引导。</div>
+
+    <div v-if="lic" class="lic-bar">
+      <span class="lic-tag">{{ lic.mode === 'free' ? '免费版' : lic.mode }}</span>
+      <span>已开通功能：{{ lic.features.join(' / ') }}</span>
+      <span class="lic-fp" :title="lic.machine_fingerprint">设备指纹：{{ lic.machine_fingerprint.slice(0, 12) }}…</span>
+    </div>
 
     <div class="set-grid">
       <!-- AI 模型 -->
@@ -235,6 +253,9 @@ onMounted(async () => {
 .page-desc { font-size: 12.5px; color: var(--ink-2, #888); margin-bottom: 16px; line-height: 1.6; }
 .set-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 @media (max-width: 1100px) { .set-grid { grid-template-columns: 1fr; } }
+.lic-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 9px 14px; margin-bottom: 14px; border: 1px solid #e6e6eb; border-radius: 8px; background: #fafafa; font-size: 13px; color: #444; }
+.lic-tag { padding: 2px 10px; border-radius: 999px; background: #e8f5e9; color: #2e7d32; font-weight: 600; }
+.lic-fp { color: #888; font-family: monospace; font-size: 12px; }
 .set-card {
   background: var(--bg-card, #fff);
   border: 1px solid var(--line, #ececec);
